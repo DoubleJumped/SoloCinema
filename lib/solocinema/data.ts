@@ -32,7 +32,7 @@ export async function getSoloCinemaShowings(): Promise<ScreeningView[]> {
         apikey: supabaseKey,
         Authorization: `Bearer ${supabaseKey}`
       },
-      next: { revalidate: 300 }
+      cache: "no-store"
     }
   );
 

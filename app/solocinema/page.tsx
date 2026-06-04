@@ -11,7 +11,7 @@ import type { ScreeningView } from "@/lib/solocinema/types";
 export const dynamic = "force-dynamic";
 
 type PageProps = {
-  searchParams?: Promise<{ all?: string }> | { all?: string };
+  searchParams?: Promise<{ all?: string }>;
 };
 
 export default async function SoloCinemaPage({ searchParams }: PageProps) {
