@@ -1,0 +1,4 @@
+# SoloCinema
+
+SoloCinema project workspace.
+
