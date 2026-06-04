@@ -1,0 +1,1 @@
+"""SoloCinema collector package namespace."""

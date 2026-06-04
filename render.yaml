@@ -1,0 +1,15 @@
+services:
+  - type: cron
+    name: solocinema-collector
+    env: python
+    plan: starter
+    schedule: "*/45 16-23 * * *"
+    buildCommand: pip install -e ".[collector]"
+    startCommand: python -m collector.solocinema_collector.cli run-fixture --database-url supabase
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.13
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false

@@ -1,0 +1,19 @@
+[project]
+name = "solocinema"
+version = "0.1.0"
+description = "Regina low-occupancy movie screening tracker"
+requires-python = ">=3.12"
+dependencies = ["pydantic>=2.8"]
+
+[project.optional-dependencies]
+collector = [
+  "playwright>=1.45",
+  "sqlalchemy>=2.0",
+  "sqlmodel>=0.0.22"
+]
+
+[tool.pytest.ini_options]
+testpaths = ["collector/tests"]
+
+[tool.setuptools.packages.find]
+include = ["collector*"]

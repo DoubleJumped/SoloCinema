@@ -8,17 +8,24 @@
 
 # Dependencies
 node_modules/
+.tools/
 .venv/
 venv/
+__pycache__/
+*.pyc
+.pip-cache/
+*.egg-info/
 
 # Build outputs
 dist/
 build/
 out/
+.next/
+tmp/
+*.tsbuildinfo
 
 # Logs
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-

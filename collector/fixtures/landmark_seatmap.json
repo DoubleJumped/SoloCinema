@@ -1,0 +1,28 @@
+{
+  "auditorium": "1",
+  "sections": [
+    {
+      "name": "Main",
+      "rows": [
+        {
+          "name": "A",
+          "seats": [
+            { "id": "A1", "row": "A", "number": "1", "status": "available" },
+            { "id": "A2", "row": "A", "number": "2", "status": "available" },
+            { "id": "A3", "row": "A", "number": "3", "status": "sold" },
+            { "id": "A4", "row": "A", "number": "4", "status": "held" }
+          ]
+        },
+        {
+          "name": "B",
+          "seats": [
+            { "id": "B1", "row": "B", "number": "1", "status": "available" },
+            { "id": "B2", "row": "B", "number": "2", "status": "blocked" },
+            { "id": "B3", "row": "B", "number": "3", "status": "available" },
+            { "id": "B4", "row": "B", "number": "4", "status": "available" }
+          ]
+        }
+      ]
+    }
+  ]
+}
