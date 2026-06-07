@@ -37,6 +37,38 @@ def main(argv: list[str] | None = None) -> int:
     probe.add_argument("--url", required=True)
     probe.add_argument("--wait-ms", type=int, default=5000)
 
+    discover_landmark = subparsers.add_parser("discover-landmark")
+    discover_landmark.add_argument("--url", default="https://as.landmarkcinemas.com/showtimes/regina")
+    discover_landmark.add_argument("--wait-ms", type=int, default=5000)
+    discover_landmark.add_argument("--max-showings", type=int)
+
+    discover_landmark_atom = subparsers.add_parser("discover-landmark-atom")
+    discover_landmark_atom.add_argument(
+        "--url", default="https://www.atomtickets.com/theaters/landmark-cinemas-regina/49885"
+    )
+    discover_landmark_atom.add_argument("--max-showings", type=int)
+
+    discover_cineplex_southland_atom = subparsers.add_parser("discover-cineplex-southland-atom")
+    discover_cineplex_southland_atom.add_argument(
+        "--url",
+        default="https://www.atomtickets.com/theaters/cineplex-odeon-southland-mall-cinemas/6446",
+    )
+    discover_cineplex_southland_atom.add_argument("--max-showings", type=int)
+
+    probe_atom = subparsers.add_parser("probe-atom-seatmap")
+    probe_atom.add_argument("--url", required=True)
+
+    run_landmark = subparsers.add_parser("run-landmark")
+    run_landmark.add_argument("--database-url", default=DEFAULT_DATABASE_URL)
+    run_landmark.add_argument("--url", default="https://as.landmarkcinemas.com/showtimes/regina")
+    run_landmark.add_argument("--wait-ms", type=int, default=5000)
+    run_landmark.add_argument("--max-showings", type=int)
+    run_landmark.add_argument(
+        "--skip-seat-probe",
+        action="store_true",
+        help="Write discovered showings with unknown snapshots without opening seat maps.",
+    )
+
     args = parser.parse_args(argv)
     if args.command == "init-db":
         repository = repository_from_url(args.database_url)
@@ -56,6 +88,62 @@ def main(argv: list[str] | None = None) -> int:
 
         result = asyncio.run(probe_seat_map(args.url, wait_ms=args.wait_ms))
         print(result_to_json(result))
+        return 0
+    if args.command == "discover-landmark":
+        from .landmark import discover_landmark_showings, showings_to_json
+
+        try:
+            showings = asyncio.run(
+                discover_landmark_showings(args.url, wait_ms=args.wait_ms)
+            )
+        except RuntimeError as error:
+            parser.exit(1, f"error: {error}\n")
+        if args.max_showings is not None:
+            showings = showings[: args.max_showings]
+        print(showings_to_json(showings))
+        return 0
+    if args.command == "discover-landmark-atom":
+        from .atom import discover_atom_showings
+        from .landmark import landmark_showing_from_atom, showings_to_json
+
+        showings = [landmark_showing_from_atom(showing) for showing in discover_atom_showings(args.url)]
+        if args.max_showings is not None:
+            showings = showings[: args.max_showings]
+        print(showings_to_json(showings))
+        return 0
+    if args.command == "discover-cineplex-southland-atom":
+        from .atom import discover_atom_showings
+        from .landmark import showings_to_json
+
+        showings = discover_atom_showings(
+            args.url,
+            source_prefix="cineplex-southland",
+            include_unticketed=True,
+        )
+        if args.max_showings is not None:
+            showings = showings[: args.max_showings]
+        print(showings_to_json(showings))
+        return 0
+    if args.command == "probe-atom-seatmap":
+        from .atom import probe_atom_checkout_seat_map
+        from .playwright_probe import result_to_json
+
+        print(result_to_json(probe_atom_checkout_seat_map(args.url)))
+        return 0
+    if args.command == "run-landmark":
+        from .landmark import run_landmark_collection, summary_to_json
+
+        try:
+            summary = run_landmark_collection(
+                database_url=args.database_url,
+                showtimes_url=args.url,
+                wait_ms=args.wait_ms,
+                max_showings=args.max_showings,
+                probe_seats=not args.skip_seat_probe,
+            )
+        except RuntimeError as error:
+            parser.exit(1, f"error: {error}\n")
+        print(summary_to_json(summary))
         return 0
     raise AssertionError(f"Unhandled command {args.command}")
 

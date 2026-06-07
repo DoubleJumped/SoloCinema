@@ -15,9 +15,21 @@ Build a public Regina movie tracker as a self-contained `/solocinema` page in th
 
 ## Seat Data Strategy
 
-- Scrape Landmark Regina first, because its public page references seat-map previews.
-- Add Cineplex Regina locations second, using the ticket flow if seat maps are reachable without login or checkout.
+- Use Atom Tickets as the current Landmark Regina V1 path. Atom is Landmark's
+  public ticketing partner for Regina and exposes checkout seat-map fragments
+  that can be counted without a login.
+- Keep Landmark's own page as a discovery/probing fallback, but treat direct
+  Playwright scraping there as currently blocked by Akamai Access Denied in this
+  environment.
+- Add Cineplex Regina locations second through Cineplex's own ticketing preview
+  APIs. Southland is verified with location id `4108`: showtime discovery comes
+  from the theatrical showtimes API, and read-only seat layout plus preview
+  availability come from the ticketing API.
 - Counting method priority:
+  - For Landmark, discover Atom checkout links and fetch `/checkout/{showtime_id}/seat-map` fragments.
+  - Merge Atom price-area fragments by physical seat id so one seat is counted once.
+  - For Cineplex, fetch `/v1/theatre/{location_id}/showtime/{vista_session_id}/seat-layout`
+    and `/v1/theatre/{location_id}/showtime/{vista_session_id}/seat-availability?preview=true`.
   - Capture Playwright network responses and parse structured seat-map JSON when available.
   - Fall back to DOM parsing of rendered seat buttons/SVG/classes.
   - Avoid screenshot/image recognition unless absolutely necessary.
@@ -64,10 +76,12 @@ Build a public Regina movie tracker as a self-contained `/solocinema` page in th
 ## Test Plan
 
 - Build a data-quality spike before polishing UI:
-  - Confirm Landmark seat maps can be counted.
+  - Confirm Landmark/Atom seat maps can be counted.
   - Confirm Cineplex seat maps can be reached and counted.
   - Save fixtures for network payloads or DOM snapshots.
 - Unit test seat-state parsing for available, occupied, blocked, accessible, and unknown states.
+- Unit test Atom theater-page parsing and multi-fragment seat-map merging.
+- Unit test Cineplex layout-plus-availability parsing before wiring live writes.
 - Unit test sorting/filtering for under-5, unknown, stale, and all-screenings views.
 - Integration test Supabase writes for showings, snapshots, and scrape runs.
 - Run local Next.js page against seeded sample data before deploying.
@@ -85,6 +99,10 @@ Build a public Regina movie tracker as a self-contained `/solocinema` page in th
 
 - [Walzr Empty Screenings](https://walzr.com/empty-screenings)
 - [Landmark Regina showtimes](https://as.landmarkcinemas.com/showtimes/regina)
+- [Atom Tickets Landmark Regina](https://www.atomtickets.com/theaters/landmark-cinemas-regina/49885)
+- [Landmark Atom Tickets info](https://cms.landmarkcinemas.com/experiences/atom-tickets/)
+- [Cineplex Southland](https://www.cineplex.com/theatre/cineplex-cinemas-southland)
+- [Cineplex Southland showtimes API](https://apis.cineplex.com/prod/cpx/theatrical/api/v1/showtimes?language=en&locationId=4108)
 - [Cineplex Normanview](https://www.cineplex.com/theatre/cineplex-cinemas-normanview)
 - [Render pricing](https://render.com/pricing)
 - [Supabase pricing](https://supabase.com/docs/pricing)

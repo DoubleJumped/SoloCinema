@@ -79,6 +79,31 @@ def parse_dom_seats(html: str) -> SeatParseResult:
     return _summarize_states(parser.states)
 
 
+def parse_atom_seat_map_fragments(fragments: list[str]) -> SeatParseResult:
+    seats: dict[str, list[bool]] = {}
+    for fragment in fragments:
+        parser = AtomSeatMapParser()
+        parser.feed(fragment)
+        for seat in parser.seats:
+            identity = seat.get("id") or seat.get("seat-name")
+            available = seat.get("is-available")
+            if not identity or available not in {"true", "false"}:
+                continue
+            seats.setdefault(identity, []).append(available == "true")
+
+    if not seats:
+        return SeatParseResult(
+            inferred_occupied=None,
+            available_seats=None,
+            total_sellable_seats=None,
+            raw_status="unknown",
+            confidence="low",
+            error_message="No Atom seat elements found in fragments",
+        )
+
+    return _summarize_states("available" if any(values) else "occupied" for values in seats.values())
+
+
 def _walk_seat_like_objects(value: Any) -> Iterable[dict[str, Any]]:
     if isinstance(value, dict):
         keys = set(value)
@@ -168,6 +193,10 @@ class SeatElementParser(HTMLParser):
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attributes = {key.lower(): value or "" for key, value in attrs}
         class_tokens = _tokenize(attributes.get("class", ""))
+        if "seat" in class_tokens and attributes.get("is-available") in {"true", "false"}:
+            self.states.append("available" if attributes["is-available"] == "true" else "occupied")
+            return
+
         data_state = (
             attributes.get("data-seat-state")
             or attributes.get("data-status")
@@ -194,3 +223,17 @@ class SeatElementParser(HTMLParser):
             self.states.append("available")
         else:
             self.states.append("unknown")
+
+
+class AtomSeatMapParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.seats: list[dict[str, str]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag != "g":
+            return
+        attributes = {key.lower(): value or "" for key, value in attrs}
+        if "seat" not in _tokenize(attributes.get("class", "")):
+            return
+        self.seats.append(attributes)

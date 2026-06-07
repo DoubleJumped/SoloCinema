@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from collector.solocinema_collector.seat_parser import (
+    parse_atom_seat_map_fragments,
     parse_dom_seats,
     parse_structured_seats,
 )
@@ -40,6 +41,29 @@ class SeatParserTests(unittest.TestCase):
         self.assertIsNone(result.inferred_occupied)
         self.assertEqual(result.raw_status, "unknown")
         self.assertEqual(result.confidence, "low")
+
+    def test_atom_fragments_merge_area_categories_by_seat(self) -> None:
+        standard = """
+        <svg>
+          <g id="seat-a1" class="seat" seat-name="A1" is-available="true" seat-type="LoveSeatLeft"></g>
+          <g id="seat-a2" class="seat" seat-name="A2" is-available="false" seat-type="Unavailable"></g>
+          <g id="seat-a3" class="seat" seat-name="A3" is-available="false" seat-type="Unavailable"></g>
+        </svg>
+        """
+        premiere = """
+        <svg>
+          <g id="seat-a1" class="seat" seat-name="A1" is-available="false" seat-type="Unavailable"></g>
+          <g id="seat-a2" class="seat" seat-name="A2" is-available="true" seat-type="LoveSeatRight"></g>
+          <g id="seat-a3" class="seat" seat-name="A3" is-available="false" seat-type="Unavailable"></g>
+        </svg>
+        """
+
+        result = parse_atom_seat_map_fragments([standard, premiere])
+
+        self.assertEqual(result.available_seats, 2)
+        self.assertEqual(result.inferred_occupied, 1)
+        self.assertEqual(result.total_sellable_seats, 3)
+        self.assertEqual(result.confidence, "high")
 
 
 if __name__ == "__main__":

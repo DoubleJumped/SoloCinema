@@ -9,6 +9,40 @@ lowest inferred seat occupancy. The repo contains:
 - a Supabase schema,
 - local tests that run without Supabase, Render, or live scraping credentials.
 
+## Current Status
+
+The working Landmark Regina V1 route is Atom Tickets. Landmark's own showtimes
+page can block automated Playwright sessions with Akamai Access Denied, but Atom
+serves public Landmark Regina showtimes and checkout seat-map fragments without a
+login.
+
+What works now:
+
+- `discover-landmark-atom` parses Atom's Landmark Regina theater page.
+- `discover-cineplex-southland-atom` experimentally parses Atom's Cineplex
+  Southland theater page for disabled, non-ticketable showtime buttons.
+- `probe-atom-seatmap` reads an Atom checkout page, fetches its seat-map
+  fragments, and infers available versus occupied seats.
+- `run-landmark` tries Landmark's own site first, then falls back to Atom when
+  Landmark blocks the browser.
+- Local SQLite writes and Supabase repository wiring are in place for collector
+  dry runs.
+- The current collector test suite covers Landmark extraction, Atom discovery,
+  seat-map parsing, and local storage.
+
+Current limitations:
+
+- Atom results are inferred from public reserved-seat availability, not official
+  sales data.
+- Atom returns separate seat-map fragments for price area categories; the parser
+  merges those fragments by physical seat id to avoid double-counting.
+- Atom has a Cineplex Southland page, but it says ticketing is not available
+  there. That page can expose movie/time discovery, but not Atom checkout seat
+  maps.
+- Cineplex Southland's own ticketing preview APIs have been verified for
+  read-only seat layout and availability, but the collector does not yet have a
+  Cineplex module.
+
 ## Local Validation
 
 This workspace can be validated with the bundled Codex runtimes:
@@ -17,6 +51,11 @@ This workspace can be validated with the bundled Codex runtimes:
 /Users/graemewatson/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --test tests/*.test.ts
 /Users/graemewatson/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s collector/tests
 ```
+
+The expected git tree after this work is the Landmark/Atom collector source,
+tests, and documentation changes. Ignored local artifacts such as `.next/`,
+`.venv/`, `node_modules/`, `tmp/`, `*.egg-info`, and `*.tsbuildinfo` are not part
+of the commit surface.
 
 For normal development on your machine, install dependencies and run:
 
@@ -41,14 +80,16 @@ SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your-anon-key
 ```
 
-The collector can also write to local SQLite for tests and dry runs:
+The collector can also write to local SQLite for tests and dry runs. A URL like
+`sqlite:///tmp/solocinema.sqlite` is relative to this workspace; use
+`sqlite:////tmp/solocinema.sqlite` for an absolute `/tmp` path.
 
 ```bash
 /Users/graemewatson/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 \
   -m collector.solocinema_collector.cli init-db --database-url sqlite:///tmp/solocinema.sqlite
 ```
 
-For the live seat-map spike after Playwright is installed:
+For the original live Landmark Playwright spike after Playwright is installed:
 
 ```bash
 python -m collector.solocinema_collector.cli probe-url \
@@ -57,6 +98,76 @@ python -m collector.solocinema_collector.cli probe-url \
 
 The probe captures JSON network responses first and falls back to DOM seat
 elements. It prints inferred counts without writing to any database.
+
+Landmark's own site can return Akamai Access Denied to automated browsers. The
+working V1 path uses Atom Tickets, an official Landmark ticketing partner, for
+Landmark Regina showtimes and reserved-seat maps.
+
+To discover Landmark Regina showings through Atom without writing anything:
+
+```bash
+python -m collector.solocinema_collector.cli discover-landmark-atom
+```
+
+To experiment with Cineplex Southland showtime discovery through Atom:
+
+```bash
+python -m collector.solocinema_collector.cli discover-cineplex-southland-atom
+```
+
+This currently returns showtimes with `seat_map_url: null` because Atom renders
+Southland showtimes as disabled buttons rather than checkout links.
+
+The viable Southland path is Cineplex's own ticketing preview flow. Use Cineplex
+location id `4108` and discover showtimes with:
+
+```text
+GET https://apis.cineplex.com/prod/cpx/theatrical/api/v1/showtimes?language=en&locationId=4108
+Ocp-Apim-Subscription-Key: dcdac5601d864addbc2675a2e96cb1f8
+```
+
+For each online-enabled, reserved-seating `vistaSessionId`, fetch:
+
+```text
+GET https://apis.cineplex.com/prod/ticketing/api/v1/theatre/4108/showtime/{vistaSessionId}/seat-layout
+GET https://apis.cineplex.com/prod/ticketing/api/v1/theatre/4108/showtime/{vistaSessionId}/seat-availability?preview=true
+Ocp-Apim-Subscription-Key: dcdac5601d864addbc2675a2e96cb1f8
+```
+
+Verified on June 6, 2026 against Southland showtimes `263673` and `263674`.
+Both returned complete 123-seat layouts and matching availability maps. For
+`263673`, availability was `70 Available`, `52 Occupied`, and `1 Broken`; for
+`263674`, availability was `110 Available`, `12 Occupied`, and `1 Broken`.
+Treat `Available` as open, `Occupied` as taken, and `Broken` as unavailable.
+Cineplex's showtime-level `seatsRemaining` can differ slightly from the
+seat-map count, so the seat-map availability response should be the source of
+truth for occupancy.
+
+To probe a single Atom checkout seat map:
+
+```bash
+python -m collector.solocinema_collector.cli probe-atom-seatmap \
+  --url "https://www.atomtickets.com/checkout/{showtime_id}"
+```
+
+The Atom probe opens the public checkout page, reads its checkout context, then
+loads `/checkout/{showtime_id}/seat-map` for each ticket area category. It
+merges those category maps by seat id so Standard and Premiere pricing sections
+do not double-count the same physical seat.
+
+To collect Landmark Regina showings and seat snapshots into local SQLite:
+
+```bash
+python -m collector.solocinema_collector.cli run-landmark \
+  --database-url sqlite:///tmp/solocinema.sqlite
+```
+
+`run-landmark` tries Landmark first and automatically falls back to Atom when
+Landmark blocks the Playwright browser. Use `--max-showings 3` for a small live
+validation run, or `--skip-seat-probe` to verify showtime discovery and database
+writes without opening seat-map pages. No Landmark or Atom login is required.
+Supabase writes require `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`; browser
+reads only use `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
 
 ## Supabase Setup
 
@@ -80,9 +191,9 @@ When you are ready to schedule scraping:
 4. Install command:
    `pip install -e ".[collector]"`
 5. Command:
-   `python -m collector.solocinema_collector.cli run-fixture --database-url supabase`
-6. Replace `run-fixture` with the live chain collector command after Landmark
-   and Cineplex live flows are confirmed.
+   `python -m collector.solocinema_collector.cli run-landmark --database-url supabase`
+6. Keep `run-fixture` available for smoke tests that exercise writes without
+   hitting live theater sites.
 7. Add environment variables:
    `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`.
 
