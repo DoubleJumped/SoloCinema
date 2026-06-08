@@ -25,10 +25,16 @@ What works now:
   fragments, and infers available versus occupied seats.
 - `run-landmark` tries Landmark's own site first, then falls back to Atom when
   Landmark blocks the browser.
+- `discover-cineplex` parses Cineplex's Regina showtimes API for Southland
+  (`4108`) and Normanview (`4114`) by default.
+- `probe-cineplex-seatmap` reads Cineplex layout and preview availability APIs
+  and counts available, occupied, and broken seats.
+- `run-cineplex` writes Cineplex showings and seat snapshots, and `run-all`
+  collects Landmark plus Cineplex in one scheduler command.
 - Local SQLite writes and Supabase repository wiring are in place for collector
   dry runs.
 - The current collector test suite covers Landmark extraction, Atom discovery,
-  seat-map parsing, and local storage.
+  Cineplex discovery/counting, seat-map parsing, and local storage.
 
 Current limitations:
 
@@ -39,9 +45,8 @@ Current limitations:
 - Atom has a Cineplex Southland page, but it says ticketing is not available
   there. That page can expose movie/time discovery, but not Atom checkout seat
   maps.
-- Cineplex Southland's own ticketing preview APIs have been verified for
-  read-only seat layout and availability, but the collector does not yet have a
-  Cineplex module.
+- Cineplex occupancy uses read-only preview availability. It should be treated
+  as inferred availability, not official sales data.
 
 ## Local Validation
 
@@ -118,8 +123,15 @@ python -m collector.solocinema_collector.cli discover-cineplex-southland-atom
 This currently returns showtimes with `seat_map_url: null` because Atom renders
 Southland showtimes as disabled buttons rather than checkout links.
 
-The viable Southland path is Cineplex's own ticketing preview flow. Use Cineplex
-location id `4108` and discover showtimes with:
+The viable Cineplex path is Cineplex's own ticketing preview flow. Southland is
+location id `4108`; Normanview is `4114`. Discover current Cineplex Regina
+showings without writing anything:
+
+```bash
+python -m collector.solocinema_collector.cli discover-cineplex
+```
+
+Under the hood, showtime discovery uses:
 
 ```text
 GET https://apis.cineplex.com/prod/cpx/theatrical/api/v1/showtimes?language=en&locationId=4108
@@ -141,7 +153,17 @@ Both returned complete 123-seat layouts and matching availability maps. For
 Treat `Available` as open, `Occupied` as taken, and `Broken` as unavailable.
 Cineplex's showtime-level `seatsRemaining` can differ slightly from the
 seat-map count, so the seat-map availability response should be the source of
-truth for occupancy.
+truth for occupancy. Re-validated on June 8, 2026 against Southland showtime
+`264339`; discovery returned live showings and the seat probe returned a
+123-seat layout with `123 Available`.
+
+To probe a single Cineplex seat map:
+
+```bash
+python -m collector.solocinema_collector.cli probe-cineplex-seatmap \
+  --location-id 4108 \
+  --vista-session-id 264339
+```
 
 To probe a single Atom checkout seat map:
 
@@ -169,6 +191,24 @@ writes without opening seat-map pages. No Landmark or Atom login is required.
 Supabase writes require `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`; browser
 reads only use `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
 
+The Cineplex collector has a default observed subscription key for the public
+site APIs. If Cineplex rotates it, set `CINEPLEX_SUBSCRIPTION_KEY` in the
+collector environment.
+
+To collect Cineplex Regina showings and seat snapshots into local SQLite:
+
+```bash
+python -m collector.solocinema_collector.cli run-cineplex \
+  --database-url sqlite:///tmp/solocinema.sqlite
+```
+
+To collect all supported chains in one run:
+
+```bash
+python -m collector.solocinema_collector.cli run-all \
+  --database-url sqlite:///tmp/solocinema.sqlite
+```
+
 ## Supabase Setup
 
 When you are ready to connect Supabase:
@@ -191,7 +231,7 @@ When you are ready to schedule scraping:
 4. Install command:
    `pip install -e ".[collector]"`
 5. Command:
-   `python -m collector.solocinema_collector.cli run-landmark --database-url supabase`
+   `python -m collector.solocinema_collector.cli run-all --database-url supabase`
 6. Keep `run-fixture` available for smoke tests that exercise writes without
    hitting live theater sites.
 7. Add environment variables:

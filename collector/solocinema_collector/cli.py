@@ -55,6 +55,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     discover_cineplex_southland_atom.add_argument("--max-showings", type=int)
 
+    discover_cineplex = subparsers.add_parser("discover-cineplex")
+    discover_cineplex.add_argument(
+        "--location-id",
+        action="append",
+        dest="location_ids",
+        help="Cineplex location id. Can be passed more than once; defaults to Regina locations.",
+    )
+    discover_cineplex.add_argument("--max-showings", type=int)
+
+    probe_cineplex = subparsers.add_parser("probe-cineplex-seatmap")
+    probe_cineplex.add_argument("--location-id", required=True)
+    probe_cineplex.add_argument("--vista-session-id", required=True)
+
     probe_atom = subparsers.add_parser("probe-atom-seatmap")
     probe_atom.add_argument("--url", required=True)
 
@@ -64,6 +77,31 @@ def main(argv: list[str] | None = None) -> int:
     run_landmark.add_argument("--wait-ms", type=int, default=5000)
     run_landmark.add_argument("--max-showings", type=int)
     run_landmark.add_argument(
+        "--skip-seat-probe",
+        action="store_true",
+        help="Write discovered showings with unknown snapshots without opening seat maps.",
+    )
+
+    run_cineplex = subparsers.add_parser("run-cineplex")
+    run_cineplex.add_argument("--database-url", default=DEFAULT_DATABASE_URL)
+    run_cineplex.add_argument(
+        "--location-id",
+        action="append",
+        dest="location_ids",
+        help="Cineplex location id. Can be passed more than once; defaults to Regina locations.",
+    )
+    run_cineplex.add_argument("--max-showings", type=int)
+    run_cineplex.add_argument(
+        "--skip-seat-probe",
+        action="store_true",
+        help="Write discovered showings with unknown snapshots without opening seat maps.",
+    )
+
+    run_all = subparsers.add_parser("run-all")
+    run_all.add_argument("--database-url", default=DEFAULT_DATABASE_URL)
+    run_all.add_argument("--wait-ms", type=int, default=5000)
+    run_all.add_argument("--max-showings-per-chain", type=int)
+    run_all.add_argument(
         "--skip-seat-probe",
         action="store_true",
         help="Write discovered showings with unknown snapshots without opening seat maps.",
@@ -124,6 +162,40 @@ def main(argv: list[str] | None = None) -> int:
             showings = showings[: args.max_showings]
         print(showings_to_json(showings))
         return 0
+    if args.command == "discover-cineplex":
+        from .cineplex import (
+            CINEPLEX_REGINA_THEATERS,
+            discover_cineplex_showings,
+            showings_to_json,
+        )
+
+        showings = []
+        for location_id in args.location_ids or list(CINEPLEX_REGINA_THEATERS):
+            showings.extend(discover_cineplex_showings(location_id))
+        if args.max_showings is not None:
+            showings = showings[: args.max_showings]
+        print(showings_to_json(showings))
+        return 0
+    if args.command == "probe-cineplex-seatmap":
+        from .cineplex import (
+            CINEPLEX_SUBSCRIPTION_KEY,
+            parse_cineplex_seat_responses,
+            _open_json,
+            _seat_availability_url,
+            _seat_layout_url,
+        )
+        from .playwright_probe import result_to_json
+
+        layout = _open_json(
+            _seat_layout_url(args.location_id, args.vista_session_id),
+            subscription_key=CINEPLEX_SUBSCRIPTION_KEY,
+        )
+        availability = _open_json(
+            _seat_availability_url(args.location_id, args.vista_session_id),
+            subscription_key=CINEPLEX_SUBSCRIPTION_KEY,
+        )
+        print(result_to_json(parse_cineplex_seat_responses(layout, availability)))
+        return 0
     if args.command == "probe-atom-seatmap":
         from .atom import probe_atom_checkout_seat_map
         from .playwright_probe import result_to_json
@@ -144,6 +216,44 @@ def main(argv: list[str] | None = None) -> int:
         except RuntimeError as error:
             parser.exit(1, f"error: {error}\n")
         print(summary_to_json(summary))
+        return 0
+    if args.command == "run-cineplex":
+        from .cineplex import run_cineplex_collection, summary_to_json
+
+        summary = run_cineplex_collection(
+            database_url=args.database_url,
+            location_ids=args.location_ids,
+            max_showings=args.max_showings,
+            probe_seats=not args.skip_seat_probe,
+        )
+        print(summary_to_json(summary))
+        return 0
+    if args.command == "run-all":
+        from dataclasses import asdict
+
+        from .cineplex import run_cineplex_collection
+        from .landmark import run_landmark_collection
+
+        landmark_summary = run_landmark_collection(
+            database_url=args.database_url,
+            wait_ms=args.wait_ms,
+            max_showings=args.max_showings_per_chain,
+            probe_seats=not args.skip_seat_probe,
+        )
+        cineplex_summary = run_cineplex_collection(
+            database_url=args.database_url,
+            max_showings=args.max_showings_per_chain,
+            probe_seats=not args.skip_seat_probe,
+        )
+        print(
+            json.dumps(
+                {
+                    "landmark": asdict(landmark_summary),
+                    "cineplex": asdict(cineplex_summary),
+                },
+                indent=2,
+            )
+        )
         return 0
     raise AssertionError(f"Unhandled command {args.command}")
 
