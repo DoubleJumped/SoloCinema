@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 from collector.solocinema_collector.landmark import (
     LandmarkShowing,
@@ -11,6 +12,7 @@ from collector.solocinema_collector.landmark import (
     extract_showings_from_dom_candidates,
     extract_showings_from_payloads,
     normalize_movie_title,
+    run_landmark_collection,
     write_landmark_showings,
 )
 from collector.solocinema_collector.storage import SQLiteRepository
@@ -118,6 +120,39 @@ class LandmarkCollectorTests(unittest.TestCase):
 
             self.assertEqual(summary.status, "success")
             self.assertEqual(summary.checked, 1)
+            self.assertEqual(rows[0]["movie_title"], "The Quiet Frame")
+            self.assertEqual(rows[0]["raw_status"], "unknown")
+
+    def test_run_landmark_falls_back_to_atom_when_playwright_browser_missing(self) -> None:
+        async def raise_browser_missing(*args, **kwargs):
+            raise RuntimeError("Executable doesn't exist at chromium")
+
+        with tempfile.TemporaryDirectory() as directory:
+            database_url = f"sqlite:///{Path(directory) / 'solocinema.sqlite'}"
+            with patch(
+                "collector.solocinema_collector.landmark.discover_landmark_showings",
+                raise_browser_missing,
+            ), patch(
+                "collector.solocinema_collector.landmark.discover_landmark_atom_showings",
+                return_value=[
+                    LandmarkShowing(
+                        movie_title="The Quiet Frame",
+                        starts_at=datetime(2026, 6, 7, 1, 15, tzinfo=UTC),
+                        ticket_url="https://www.atomtickets.com/checkout/630921736",
+                        source_id="landmark-regina-atom-630921736",
+                        format="Standard",
+                    )
+                ],
+            ):
+                summary = run_landmark_collection(
+                    database_url=database_url,
+                    probe_seats=False,
+                )
+
+            repository = SQLiteRepository(database_url)
+            rows = repository.list_screenings()
+
+            self.assertEqual(summary.status, "success")
             self.assertEqual(rows[0]["movie_title"], "The Quiet Frame")
             self.assertEqual(rows[0]["raw_status"], "unknown")
 

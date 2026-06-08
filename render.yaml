@@ -5,7 +5,7 @@ services:
     plan: starter
     schedule: "*/45 16-23 * * *"
     buildCommand: pip install -e ".[collector]"
-    startCommand: python -m collector.solocinema_collector.cli run-fixture --database-url supabase
+    startCommand: python -m collector.solocinema_collector.cli run-all --database-url supabase
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.13

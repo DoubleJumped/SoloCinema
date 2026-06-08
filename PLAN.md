@@ -21,10 +21,10 @@ Build a public Regina movie tracker as a self-contained `/solocinema` page in th
 - Keep Landmark's own page as a discovery/probing fallback, but treat direct
   Playwright scraping there as currently blocked by Akamai Access Denied in this
   environment.
-- Add Cineplex Regina locations second through Cineplex's own ticketing preview
-  APIs. Southland is verified with location id `4108`: showtime discovery comes
-  from the theatrical showtimes API, and read-only seat layout plus preview
-  availability come from the ticketing API.
+- Collect Cineplex Regina locations through Cineplex's own ticketing preview
+  APIs. Southland uses location id `4108` and Normanview uses `4114`; showtime
+  discovery comes from the theatrical showtimes API, and read-only seat layout
+  plus preview availability come from the ticketing API.
 - Counting method priority:
   - For Landmark, discover Atom checkout links and fetch `/checkout/{showtime_id}/seat-map` fragments.
   - Merge Atom price-area fragments by physical seat id so one seat is counted once.
@@ -81,7 +81,8 @@ Build a public Regina movie tracker as a self-contained `/solocinema` page in th
   - Save fixtures for network payloads or DOM snapshots.
 - Unit test seat-state parsing for available, occupied, blocked, accessible, and unknown states.
 - Unit test Atom theater-page parsing and multi-fragment seat-map merging.
-- Unit test Cineplex layout-plus-availability parsing before wiring live writes.
+- Unit test Cineplex discovery, layout-plus-availability parsing, and local
+  write orchestration.
 - Unit test sorting/filtering for under-5, unknown, stale, and all-screenings views.
 - Integration test Supabase writes for showings, snapshots, and scrape runs.
 - Run local Next.js page against seeded sample data before deploying.

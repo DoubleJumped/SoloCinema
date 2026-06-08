@@ -181,8 +181,15 @@ def run_landmark_collection(
 ) -> LandmarkCollectionSummary:
     try:
         showings = asyncio.run(discover_landmark_showings(showtimes_url, wait_ms=wait_ms))
-    except RuntimeError as error:
-        if "Akamai Access Denied" not in str(error):
+    except Exception as error:
+        message = str(error)
+        fallback_markers = (
+            "Akamai Access Denied",
+            "Playwright is not installed",
+            "Executable doesn't exist",
+            "BrowserType.launch",
+        )
+        if not any(marker in message for marker in fallback_markers):
             raise
         showings = discover_landmark_atom_showings()
     if max_showings is not None:
