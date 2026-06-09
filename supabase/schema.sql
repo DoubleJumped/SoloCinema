@@ -57,10 +57,12 @@ create table if not exists public.scrape_runs (
 );
 
 create index if not exists showings_starts_at_idx on public.showings(starts_at);
+create index if not exists showings_movie_id_idx on public.showings(movie_id);
 create index if not exists seat_snapshots_showing_checked_idx
   on public.seat_snapshots(showing_id, checked_at desc);
 
-create or replace view public.solocinema_screenings as
+create or replace view public.solocinema_screenings
+with (security_invoker = true) as
 select
   s.id::text as showing_id,
   m.source_title as movie_title,

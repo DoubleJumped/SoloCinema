@@ -4,6 +4,46 @@
 
 Build a public Regina movie tracker as a self-contained `/solocinema` page in the existing Next.js/TypeScript `gwatson.ca` site on Vercel. V1 has no login, texting, or personal preferences; it automatically shows major-chain Regina screenings sorted by lowest inferred seat occupancy, with clear freshness and confidence labels.
 
+## Current Repo State
+
+Last verified on June 9, 2026.
+
+- The repo is on `main` with the V1 app, collector, Supabase schema, and Render
+  cron config in place.
+- `/solocinema` renders Regina screenings from Supabase when
+  `SUPABASE_URL` and `SUPABASE_ANON_KEY` are present, and falls back to seeded
+  sample data when they are absent.
+- The Supabase project `SoloCinema` exists and has the expected tables and
+  `solocinema_screenings` public read view.
+- The live Supabase schema has been updated so `solocinema_screenings` uses
+  `security_invoker = true`, and the repo schema now matches that setting.
+- The collector can write fixture data to Supabase with the service role key.
+- A capped live collector run succeeded against both supported chains:
+  - Landmark: discovered 2, checked 2, failed 0.
+  - Cineplex: discovered 2, checked 2, failed 0.
+- Local app verification against live Supabase data succeeded. The page rendered
+  current Cineplex and Landmark rows from `solocinema_screenings`.
+- Local validation currently passes:
+  - `npm test`
+  - `npm run typecheck`
+  - `python -m unittest discover -s collector/tests`
+
+## Remaining Work
+
+- Deploy the Next.js app to Vercel with only browser-safe Supabase env vars:
+  `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
+- Confirm the deployed `/solocinema` page reads from Supabase instead of sample
+  data.
+- Create or connect the Render Cron job from `render.yaml`.
+- Add Render-only collector secrets: `SUPABASE_URL` and
+  `SUPABASE_SERVICE_ROLE_KEY`.
+- Run the Render job once manually or wait for the first scheduled run, then
+  verify that fresh rows appear in Supabase and on the deployed page.
+- Decide whether to remove the fixture smoke-test showing from production data
+  after deployment validation.
+- Monitor the first few scheduled collector runs for chain-specific failures,
+  stale data, or rotated Cineplex API credentials.
+
 ## Architecture
 
 - Frontend: add `/solocinema` to the existing Next.js app.
@@ -75,18 +115,23 @@ Build a public Regina movie tracker as a self-contained `/solocinema` page in th
 
 ## Test Plan
 
-- Build a data-quality spike before polishing UI:
-  - Confirm Landmark/Atom seat maps can be counted.
-  - Confirm Cineplex seat maps can be reached and counted.
-  - Save fixtures for network payloads or DOM snapshots.
-- Unit test seat-state parsing for available, occupied, blocked, accessible, and unknown states.
-- Unit test Atom theater-page parsing and multi-fragment seat-map merging.
-- Unit test Cineplex discovery, layout-plus-availability parsing, and local
+- [x] Build a data-quality spike before polishing UI:
+  - [x] Confirm Landmark/Atom seat maps can be counted.
+  - [x] Confirm Cineplex seat maps can be reached and counted.
+  - [x] Save fixtures for network payloads or DOM snapshots.
+- [x] Unit test seat-state parsing for available, occupied, blocked, accessible,
+  and unknown states.
+- [x] Unit test Atom theater-page parsing and multi-fragment seat-map merging.
+- [x] Unit test Cineplex discovery, layout-plus-availability parsing, and local
   write orchestration.
-- Unit test sorting/filtering for under-5, unknown, stale, and all-screenings views.
-- Integration test Supabase writes for showings, snapshots, and scrape runs.
-- Run local Next.js page against seeded sample data before deploying.
-- Add collector dry-run mode that prints parsed results without writing to Supabase.
+- [x] Unit test sorting/filtering for under-5, unknown, stale, and
+  all-screenings views.
+- [x] Smoke test Supabase fixture writes for showings, snapshots, and scrape
+  runs.
+- [x] Run local Next.js page against Supabase-backed data before deploying.
+- [x] Add collector dry-run mode that prints parsed results without writing to
+  Supabase.
+- [ ] Run the same end-to-end smoke test after Vercel and Render are connected.
 
 ## Assumptions
 
