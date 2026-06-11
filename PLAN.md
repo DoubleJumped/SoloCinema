@@ -4,6 +4,30 @@
 
 Build a public Regina movie tracker as a self-contained `/solocinema` page in the existing Next.js/TypeScript `gwatson.ca` site on Vercel. V1 has no login, texting, or personal preferences; it automatically shows major-chain Regina screenings sorted by lowest inferred seat occupancy, with clear freshness and confidence labels.
 
+## Agent Handoff
+
+The codebase is ready for deployment wiring. Do not start new product feature
+work until the live Vercel page and Render collector have been connected and
+verified.
+
+Next steps:
+
+1. Deploy the Next.js app to Vercel with only browser-safe Supabase env vars:
+   `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
+2. Confirm deployed `/solocinema` reads live rows from Supabase instead of
+   seeded sample data.
+3. Create or connect the Render Cron job from `render.yaml`.
+4. Add Render-only collector secrets: `SUPABASE_URL` and
+   `SUPABASE_SERVICE_ROLE_KEY`.
+5. Run the Render collector once, then confirm fresh rows appear in Supabase and
+   on the deployed page.
+6. Monitor the first few scheduled collector runs for stale data,
+   chain-specific failures, or rotated Cineplex API credentials.
+
+Keep secrets and machine-local artifacts out of git. Do not commit `.env`,
+`.env.local`, `SUPABASE_SERVICE_ROLE_KEY`, `.venv`, `node_modules`, `.next`, or
+local `tmp` files.
+
 ## Current Repo State
 
 Last verified on June 9, 2026.
