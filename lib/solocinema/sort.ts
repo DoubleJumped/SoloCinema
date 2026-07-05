@@ -47,6 +47,20 @@ export function sortScreenings(
   });
 }
 
+export function sortScreeningsByTime(screenings: readonly ScreeningView[]) {
+  return [...screenings].sort((left, right) => {
+    const starts = Date.parse(left.startsAt) - Date.parse(right.startsAt);
+    if (starts !== 0) {
+      return starts;
+    }
+    const theater = left.theaterName.localeCompare(right.theaterName);
+    if (theater !== 0) {
+      return theater;
+    }
+    return left.movieTitle.localeCompare(right.movieTitle);
+  });
+}
+
 export function filterScreenings(
   screenings: readonly ScreeningView[],
   options: { showAll: boolean }

@@ -46,7 +46,8 @@ test("parseScreeningFilters keeps valid values and drops invalid ones", () => {
       movie: "The Quiet Frame",
       theater: "Cineplex Cinemas Normanview",
       day: "2026-06-03",
-      time: "late"
+      time: "late",
+      chains: null
     }
   );
 
@@ -154,7 +155,8 @@ test("applyScreeningFilters stacks multiple filters", () => {
     movie: "The Quiet Frame",
     theater: "Landmark Cinemas 8 Regina",
     day: "2026-06-04",
-    time: "late"
+    time: "late",
+    chains: null
   });
   assert.deepEqual(
     combined.map((item) => item.id),
@@ -165,6 +167,58 @@ test("applyScreeningFilters stacks multiple filters", () => {
     applyScreeningFilters(screenings, EMPTY_FILTERS).length,
     screenings.length
   );
+});
+
+test("chains filter parses, applies, and round-trips", () => {
+  assert.deepEqual(
+    parseScreeningFilters({ chains: "Landmark,Cineplex" }).chains,
+    ["Landmark", "Cineplex"]
+  );
+  // full set and garbage both mean "all chains"
+  assert.equal(
+    parseScreeningFilters({ chains: "Landmark,Cineplex,Other" }).chains,
+    null
+  );
+  assert.equal(parseScreeningFilters({ chains: "IMAX Corp" }).chains, null);
+  assert.deepEqual(parseScreeningFilters({ chains: "none" }).chains, []);
+
+  const screenings = [
+    screening("landmark"),
+    screening("cineplex", {
+      theaterName: "Cineplex Cinemas Normanview",
+      chain: "Cineplex"
+    }),
+    screening("other", {
+      theaterName: "Rainbow Cinemas Golden Mile",
+      chain: "Other"
+    })
+  ];
+  assert.deepEqual(
+    applyScreeningFilters(screenings, {
+      ...EMPTY_FILTERS,
+      chains: ["Cineplex", "Other"]
+    }).map((item) => item.id),
+    ["cineplex", "other"]
+  );
+  assert.equal(
+    applyScreeningFilters(screenings, { ...EMPTY_FILTERS, chains: [] }).length,
+    0
+  );
+
+  const withChains = { ...EMPTY_FILTERS, chains: ["Landmark"] as const };
+  const query = buildScreeningQuery({
+    ...withChains,
+    chains: [...withChains.chains]
+  });
+  assert.deepEqual(
+    parseScreeningFilters(Object.fromEntries(new URLSearchParams(query))),
+    { ...EMPTY_FILTERS, chains: ["Landmark"] }
+  );
+  assert.equal(
+    buildScreeningQuery({ ...EMPTY_FILTERS, chains: [] }),
+    "chains=none"
+  );
+  assert.equal(hasActiveFilters({ ...EMPTY_FILTERS, chains: ["Landmark"] }), true);
 });
 
 test("getFilterOptions dedupes and sorts movies, theaters, and days", () => {
@@ -201,7 +255,8 @@ test("buildScreeningQuery round-trips through parseScreeningFilters", () => {
     movie: "The Quiet Frame",
     theater: "Landmark Cinemas 8 Regina",
     day: "2026-06-04",
-    time: "evening" as const
+    time: "evening" as const,
+    chains: null
   };
   const query = buildScreeningQuery(filters, { showAll: true });
   const params = Object.fromEntries(new URLSearchParams(query));
