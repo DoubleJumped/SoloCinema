@@ -4,6 +4,8 @@ import { useRouter } from "next/navigation";
 import {
   ALL_CHAINS,
   buildScreeningQuery,
+  EMPTY_FILTERS,
+  hasActiveFilters,
   type ChainName,
   type ScreeningFilters
 } from "@/lib/solocinema/filters";
@@ -141,6 +143,15 @@ export function FilterRail({
           <span className="led"></span>Under 5 Seats Sold
         </button>
       </div>
+      <div className="divider" aria-hidden="true"></div>
+      <button
+        type="button"
+        className="switch reset"
+        disabled={!hasActiveFilters(filters) && !showAll}
+        onClick={() => navigate({ ...EMPTY_FILTERS }, false)}
+      >
+        Reset
+      </button>
     </nav>
   );
 }

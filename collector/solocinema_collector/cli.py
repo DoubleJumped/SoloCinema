@@ -77,6 +77,18 @@ def main(argv: list[str] | None = None) -> int:
     run_landmark.add_argument("--wait-ms", type=int, default=5000)
     run_landmark.add_argument("--max-showings", type=int)
     run_landmark.add_argument(
+        "--days-ahead",
+        type=int,
+        default=7,
+        help="Discover showings this many days out, starting today (Regina time).",
+    )
+    run_landmark.add_argument(
+        "--probe-days",
+        type=int,
+        default=2,
+        help="Open seat maps only for showings within the first N days.",
+    )
+    run_landmark.add_argument(
         "--skip-seat-probe",
         action="store_true",
         help="Write discovered showings with unknown snapshots without opening seat maps.",
@@ -101,6 +113,18 @@ def main(argv: list[str] | None = None) -> int:
     run_all.add_argument("--database-url", default=DEFAULT_DATABASE_URL)
     run_all.add_argument("--wait-ms", type=int, default=5000)
     run_all.add_argument("--max-showings-per-chain", type=int)
+    run_all.add_argument(
+        "--days-ahead",
+        type=int,
+        default=7,
+        help="Discover Landmark showings this many days out, starting today (Regina time).",
+    )
+    run_all.add_argument(
+        "--probe-days",
+        type=int,
+        default=2,
+        help="Open Landmark seat maps only for showings within the first N days.",
+    )
     run_all.add_argument(
         "--skip-seat-probe",
         action="store_true",
@@ -212,6 +236,8 @@ def main(argv: list[str] | None = None) -> int:
                 wait_ms=args.wait_ms,
                 max_showings=args.max_showings,
                 probe_seats=not args.skip_seat_probe,
+                days_ahead=args.days_ahead,
+                probe_days=args.probe_days,
             )
         except RuntimeError as error:
             parser.exit(1, f"error: {error}\n")
@@ -239,6 +265,8 @@ def main(argv: list[str] | None = None) -> int:
             wait_ms=args.wait_ms,
             max_showings=args.max_showings_per_chain,
             probe_seats=not args.skip_seat_probe,
+            days_ahead=args.days_ahead,
+            probe_days=args.probe_days,
         )
         cineplex_summary = run_cineplex_collection(
             database_url=args.database_url,

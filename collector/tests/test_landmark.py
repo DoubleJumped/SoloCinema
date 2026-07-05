@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,6 +13,8 @@ from collector.solocinema_collector.landmark import (
     extract_showings_from_payloads,
     normalize_movie_title,
     run_landmark_collection,
+    upcoming_regina_dates,
+    url_with_date,
     write_landmark_showings,
 )
 from collector.solocinema_collector.storage import SQLiteRepository
@@ -155,6 +157,65 @@ class LandmarkCollectorTests(unittest.TestCase):
             self.assertEqual(summary.status, "success")
             self.assertEqual(rows[0]["movie_title"], "The Quiet Frame")
             self.assertEqual(rows[0]["raw_status"], "unknown")
+
+    def test_url_with_date_adds_or_replaces_date_param(self) -> None:
+        self.assertEqual(
+            url_with_date("https://as.landmarkcinemas.com/showtimes/regina", date(2026, 7, 8)),
+            "https://as.landmarkcinemas.com/showtimes/regina?date=2026-07-08",
+        )
+        self.assertEqual(
+            url_with_date("https://example.test/theaters/x?lang=en&date=2026-07-05", date(2026, 7, 8)),
+            "https://example.test/theaters/x?lang=en&date=2026-07-08",
+        )
+
+    def test_upcoming_regina_dates_starts_today_regina_time(self) -> None:
+        # 2026-07-06T03:00Z is still July 5, 9:00 pm in Regina (UTC-6).
+        dates = upcoming_regina_dates(3, now=datetime(2026, 7, 6, 3, 0, tzinfo=UTC))
+        self.assertEqual(
+            dates, [date(2026, 7, 5), date(2026, 7, 6), date(2026, 7, 7)]
+        )
+        self.assertEqual(len(upcoming_regina_dates(0)), 1)
+
+    def test_write_landmark_showings_defers_probe_beyond_window(self) -> None:
+        near = LandmarkShowing(
+            movie_title="Near Show",
+            starts_at=datetime(2026, 7, 6, 1, 15, tzinfo=UTC),  # July 5, Regina
+            ticket_url="https://as.landmarkcinemas.com/tickets/near",
+            source_id="landmark-regina-near",
+        )
+        far = LandmarkShowing(
+            movie_title="Far Show",
+            starts_at=datetime(2026, 7, 9, 1, 15, tzinfo=UTC),  # July 8, Regina
+            ticket_url="https://as.landmarkcinemas.com/tickets/far",
+            source_id="landmark-regina-far",
+        )
+        probed: list[str] = []
+
+        def fake_probe(showing: LandmarkShowing):
+            probed.append(showing.source_id)
+            from collector.solocinema_collector.landmark import _unknown_result
+
+            return _unknown_result("probed")
+
+        with tempfile.TemporaryDirectory() as directory:
+            database_url = f"sqlite:///{Path(directory) / 'solocinema.sqlite'}"
+            repository = SQLiteRepository(database_url)
+            repository.init_schema()
+            with patch(
+                "collector.solocinema_collector.landmark._probe_showing_seats",
+                side_effect=fake_probe,
+            ):
+                summary = write_landmark_showings(
+                    repository,
+                    [near, far],
+                    database_url=database_url,
+                    probe_seats=True,
+                    probe_until=date(2026, 7, 6),
+                )
+
+        self.assertEqual(summary.status, "success")
+        self.assertEqual(summary.checked, 2)
+        self.assertEqual(probed, ["landmark-regina-near"])
 
     def test_normalizes_movie_title_to_stable_slug(self) -> None:
         self.assertEqual(normalize_movie_title("Amelie: The Musical!"), "amelie-the-musical")

@@ -6,12 +6,17 @@ import json
 import re
 import unicodedata
 from dataclasses import asdict, dataclass
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 
-from .atom import AtomShowing, discover_atom_showings, probe_atom_checkout_seat_map
+from .atom import (
+    ATOM_LANDMARK_REGINA_URL,
+    AtomShowing,
+    discover_atom_showings,
+    probe_atom_checkout_seat_map,
+)
 from .models import Movie, ScrapeRun, SeatParseResult, SeatSnapshot, Showing, Theater
 from .playwright_probe import probe_seat_map
 from .storage import Repository, repository_from_url
@@ -19,6 +24,12 @@ from .storage import Repository, repository_from_url
 
 LANDMARK_REGINA_URL = "https://as.landmarkcinemas.com/showtimes/regina"
 LANDMARK_REGINA_EXTERNAL_ID = "landmark-regina"
+# Discover showings this many days out (starting today, Regina time), but only
+# open seat maps for the first DEFAULT_PROBE_DAYS days — occupancy for later
+# days isn't decision-relevant yet and probing all of them would multiply the
+# per-run load on the theatre sites.
+DEFAULT_DAYS_AHEAD = 7
+DEFAULT_PROBE_DAYS = 2
 REGINA_TZ = ZoneInfo("America/Regina")
 LANDMARK_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 "
@@ -142,6 +153,29 @@ class LandmarkCollectionSummary:
     status: str
 
 
+def url_with_date(url: str, day: date) -> str:
+    scheme, netloc, path, query, fragment = urlsplit(url)
+    params = dict(parse_qsl(query))
+    params["date"] = day.isoformat()
+    return urlunsplit((scheme, netloc, path, urlencode(params), fragment))
+
+
+def upcoming_regina_dates(days: int, now: datetime | None = None) -> list[date]:
+    start = (now or datetime.now(REGINA_TZ)).astimezone(REGINA_TZ).date()
+    return [start + timedelta(days=offset) for offset in range(max(1, days))]
+
+
+async def discover_landmark_showings_for_dates(
+    dates: list[date], url: str = LANDMARK_REGINA_URL, wait_ms: int = 5000
+) -> list[LandmarkShowing]:
+    discovered: list[LandmarkShowing] = []
+    for day in dates:
+        discovered.extend(
+            await discover_landmark_showings(url_with_date(url, day), wait_ms=wait_ms)
+        )
+    return _dedupe_showings(discovered)
+
+
 async def discover_landmark_showings(
     url: str = LANDMARK_REGINA_URL, wait_ms: int = 5000
 ) -> list[LandmarkShowing]:
@@ -178,9 +212,14 @@ def run_landmark_collection(
     wait_ms: int = 5000,
     max_showings: int | None = None,
     probe_seats: bool = True,
+    days_ahead: int = DEFAULT_DAYS_AHEAD,
+    probe_days: int = DEFAULT_PROBE_DAYS,
 ) -> LandmarkCollectionSummary:
+    dates = upcoming_regina_dates(days_ahead)
     try:
-        showings = asyncio.run(discover_landmark_showings(showtimes_url, wait_ms=wait_ms))
+        showings = asyncio.run(
+            discover_landmark_showings_for_dates(dates, showtimes_url, wait_ms=wait_ms)
+        )
     except Exception as error:
         message = str(error)
         fallback_markers = (
@@ -191,17 +230,19 @@ def run_landmark_collection(
         )
         if not any(marker in message for marker in fallback_markers):
             raise
-        showings = discover_landmark_atom_showings()
+        showings = discover_landmark_atom_showings_for_dates(dates)
     if max_showings is not None:
         showings = showings[:max_showings]
 
+    probe_until = dates[min(probe_days, len(dates)) - 1] if probe_days > 0 else None
     repository = repository_from_url(database_url)
     repository.init_schema()
     return write_landmark_showings(
         repository,
         showings,
         database_url=database_url,
-        probe_seats=probe_seats,
+        probe_seats=probe_seats and probe_days > 0,
+        probe_until=probe_until,
     )
 
 
@@ -210,6 +251,7 @@ def write_landmark_showings(
     showings: list[LandmarkShowing],
     database_url: str,
     probe_seats: bool = True,
+    probe_until: date | None = None,
 ) -> LandmarkCollectionSummary:
     run_id = repository.start_run(ScrapeRun(chain="Landmark"))
     checked = 0
@@ -238,8 +280,12 @@ def write_landmark_showings(
                     )
                 )
                 parsed = _unknown_result("Seat probe skipped")
-                if probe_seats:
+                if probe_seats and _within_probe_window(showing, probe_until):
                     parsed = _probe_showing_seats(showing)
+                elif probe_seats:
+                    parsed = _unknown_result(
+                        f"Seat probe deferred (showing is after {probe_until})"
+                    )
                 repository.insert_snapshot(_snapshot_from_result(showing, parsed))
             except Exception as error:
                 failed += 1
@@ -306,8 +352,16 @@ def extract_showings_from_dom_candidates(
     return _dedupe_showings(discovered)
 
 
-def discover_landmark_atom_showings() -> list[LandmarkShowing]:
-    return [landmark_showing_from_atom(showing) for showing in discover_atom_showings()]
+def discover_landmark_atom_showings(day: date | None = None) -> list[LandmarkShowing]:
+    url = url_with_date(ATOM_LANDMARK_REGINA_URL, day) if day else ATOM_LANDMARK_REGINA_URL
+    return [landmark_showing_from_atom(showing) for showing in discover_atom_showings(url)]
+
+
+def discover_landmark_atom_showings_for_dates(dates: list[date]) -> list[LandmarkShowing]:
+    discovered: list[LandmarkShowing] = []
+    for day in dates:
+        discovered.extend(discover_landmark_atom_showings(day))
+    return _dedupe_showings(discovered)
 
 
 def normalize_movie_title(title: str) -> str:
@@ -640,6 +694,12 @@ def _source_id(
         return f"landmark-regina-{raw_id}"
     digest = hashlib.sha1(ticket_url.encode("utf-8")).hexdigest()[:8]
     return f"landmark-regina-{normalize_movie_title(movie_title)}-{starts_at:%Y%m%d%H%M}-{digest}"
+
+
+def _within_probe_window(showing: LandmarkShowing, probe_until: date | None) -> bool:
+    if probe_until is None:
+        return True
+    return _as_utc(showing.starts_at).astimezone(REGINA_TZ).date() <= probe_until
 
 
 def _dedupe_showings(showings: list[LandmarkShowing]) -> list[LandmarkShowing]:
