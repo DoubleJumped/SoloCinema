@@ -39,6 +39,26 @@ export function formatDayLabel(day: string) {
   }).format(new Date(`${day}T12:00:00-06:00`));
 }
 
+export function formatBoardTime(value: string) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: REGINA_TIME_ZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).format(new Date(value));
+}
+
+export function formatBoardDate(value: string) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: REGINA_TIME_ZONE,
+    month: "short",
+    day: "numeric"
+  })
+    .format(new Date(value))
+    .replaceAll(".", "")
+    .toUpperCase();
+}
+
 export function formatRelativeCheck(value: string, now = new Date()) {
   const diffMs = Math.max(0, now.getTime() - new Date(value).getTime());
   const minutes = Math.floor(diffMs / 60000);

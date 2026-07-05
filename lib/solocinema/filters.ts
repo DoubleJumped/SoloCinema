@@ -10,11 +10,17 @@ export const TIME_OF_DAY_OPTIONS = [
 
 export type TimeOfDay = (typeof TIME_OF_DAY_OPTIONS)[number]["value"];
 
+export type ChainName = ScreeningView["chain"];
+
+export const ALL_CHAINS: readonly ChainName[] = ["Landmark", "Cineplex", "Other"];
+
 export type ScreeningFilters = {
   movie: string | null;
   theater: string | null;
   day: string | null;
   time: TimeOfDay | null;
+  /** null means "all chains"; an empty array means "no chains selected". */
+  chains: ChainName[] | null;
 };
 
 export type FilterOptions = {
@@ -27,7 +33,8 @@ export const EMPTY_FILTERS: ScreeningFilters = {
   movie: null,
   theater: null,
   day: null,
-  time: null
+  time: null,
+  chains: null
 };
 
 type RawParams = Record<string, string | string[] | undefined>;
@@ -42,6 +49,19 @@ function isTimeOfDay(value: string | null): value is TimeOfDay {
   return TIME_OF_DAY_OPTIONS.some((option) => option.value === value);
 }
 
+function parseChains(value: string | null): ChainName[] | null {
+  if (value === "none") {
+    return [];
+  }
+  if (!value) {
+    return null;
+  }
+  const chains = ALL_CHAINS.filter((chain) =>
+    value.split(",").includes(chain)
+  );
+  return chains.length > 0 && chains.length < ALL_CHAINS.length ? chains : null;
+}
+
 export function parseScreeningFilters(params: RawParams = {}): ScreeningFilters {
   const day = firstValue(params.day);
   const time = firstValue(params.time);
@@ -49,7 +69,8 @@ export function parseScreeningFilters(params: RawParams = {}): ScreeningFilters 
     movie: firstValue(params.movie) || null,
     theater: firstValue(params.theater) || null,
     day: day && DAY_PATTERN.test(day) ? day : null,
-    time: isTimeOfDay(time) ? time : null
+    time: isTimeOfDay(time) ? time : null,
+    chains: parseChains(firstValue(params.chains))
   };
 }
 
@@ -68,7 +89,13 @@ export function getTimeOfDay(startsAt: string): TimeOfDay {
 }
 
 export function hasActiveFilters(filters: ScreeningFilters) {
-  return Boolean(filters.movie || filters.theater || filters.day || filters.time);
+  return Boolean(
+    filters.movie ||
+      filters.theater ||
+      filters.day ||
+      filters.time ||
+      filters.chains !== null
+  );
 }
 
 export function applyScreeningFilters(
@@ -80,7 +107,8 @@ export function applyScreeningFilters(
       (!filters.movie || screening.movieTitle === filters.movie) &&
       (!filters.theater || screening.theaterName === filters.theater) &&
       (!filters.day || getReginaDay(screening.startsAt) === filters.day) &&
-      (!filters.time || getTimeOfDay(screening.startsAt) === filters.time)
+      (!filters.time || getTimeOfDay(screening.startsAt) === filters.time) &&
+      (!filters.chains || filters.chains.includes(screening.chain))
   );
 }
 
@@ -118,6 +146,9 @@ export function buildScreeningQuery(
   }
   if (filters.time) {
     params.set("time", filters.time);
+  }
+  if (filters.chains !== null) {
+    params.set("chains", filters.chains.length ? filters.chains.join(",") : "none");
   }
   return params.toString();
 }

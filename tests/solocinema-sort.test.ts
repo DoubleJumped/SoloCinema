@@ -4,7 +4,8 @@ import {
   filterScreenings,
   getScreeningSummary,
   isStale,
-  sortScreenings
+  sortScreenings,
+  sortScreeningsByTime
 } from "../lib/solocinema/sort.ts";
 import type { ScreeningView } from "../lib/solocinema/types.ts";
 
@@ -70,6 +71,28 @@ test("sortScreenings avoids promoting stale under-5 data over fresh data", () =>
   );
 
   assert.equal(sorted[0].id, "fresh-empty");
+});
+
+test("sortScreeningsByTime orders soonest first regardless of occupancy", () => {
+  const sorted = sortScreeningsByTime([
+    screening("late-empty", {
+      inferredOccupied: 0,
+      startsAt: "2026-06-04T05:00:00.000Z"
+    }),
+    screening("early-busy", {
+      inferredOccupied: 30,
+      startsAt: "2026-06-04T01:00:00.000Z"
+    }),
+    screening("mid-unknown", {
+      inferredOccupied: null,
+      seatStatus: "unknown",
+      startsAt: "2026-06-04T03:00:00.000Z"
+    })
+  ]);
+  assert.deepEqual(
+    sorted.map((item) => item.id),
+    ["early-busy", "mid-unknown", "late-empty"]
+  );
 });
 
 test("filterScreenings supports under-5 and show-all modes", () => {
