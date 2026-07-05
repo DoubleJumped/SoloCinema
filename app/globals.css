@@ -100,6 +100,63 @@ a {
   color: white;
 }
 
+.solo-filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 18px 0 0;
+}
+
+.solo-filter {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.solo-filter span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.solo-filter select {
+  width: 100%;
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.92rem;
+}
+
+.solo-clear {
+  min-height: 42px;
+  padding: 8px 16px;
+  border: 1px solid var(--ink);
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.solo-clear:disabled {
+  border-color: var(--line);
+  color: var(--muted);
+  cursor: default;
+}
+
+.solo-filter select:focus-visible,
+.solo-clear:focus-visible {
+  outline: 3px solid #8fc7b5;
+  outline-offset: 2px;
+}
+
 .solo-toolbar {
   display: flex;
   justify-content: space-between;
@@ -233,5 +290,13 @@ a {
 
   .solo-toolbar {
     flex-direction: column;
+  }
+
+  .solo-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .solo-clear {
+    grid-column: 1 / -1;
   }
 }
