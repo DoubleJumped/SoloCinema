@@ -49,7 +49,7 @@ function mapSupabaseRow(row: SupabaseScreeningRow): ScreeningView {
     id: row.showing_id,
     movieTitle: row.movie_title,
     theaterName: row.theater_name,
-    chain: normalizeChain(row.chain),
+    chain: normalizeChain(row.chain, row.theater_name),
     startsAt: row.starts_at,
     format: row.format,
     ticketUrl: row.ticket_url,
@@ -62,11 +62,19 @@ function mapSupabaseRow(row: SupabaseScreeningRow): ScreeningView {
   };
 }
 
-function normalizeChain(chain: string): ScreeningView["chain"] {
-  if (chain === "Landmark" || chain === "Cineplex") {
-    return chain;
+function normalizeChain(
+  chain: string,
+  theaterName: string
+): ScreeningView["chain"] {
+  // The Normanview Cineplex is known locally as "the Galaxy"; surface it as its
+  // own chain even though the collector stores it under Cineplex.
+  if (/normanview/i.test(theaterName)) {
+    return "Galaxy";
   }
-  return "Other";
+  if (chain === "Landmark") {
+    return "Landmark";
+  }
+  return "Cineplex";
 }
 
 function normalizeSeatStatus(status: string | null): SeatStatus {

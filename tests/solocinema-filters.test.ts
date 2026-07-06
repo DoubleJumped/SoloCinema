@@ -176,7 +176,7 @@ test("chains filter parses, applies, and round-trips", () => {
   );
   // full set and garbage both mean "all chains"
   assert.equal(
-    parseScreeningFilters({ chains: "Landmark,Cineplex,Other" }).chains,
+    parseScreeningFilters({ chains: "Landmark,Cineplex,Galaxy" }).chains,
     null
   );
   assert.equal(parseScreeningFilters({ chains: "IMAX Corp" }).chains, null);
@@ -185,20 +185,20 @@ test("chains filter parses, applies, and round-trips", () => {
   const screenings = [
     screening("landmark"),
     screening("cineplex", {
-      theaterName: "Cineplex Cinemas Normanview",
+      theaterName: "Cineplex Cinemas Southland",
       chain: "Cineplex"
     }),
-    screening("other", {
-      theaterName: "Rainbow Cinemas Golden Mile",
-      chain: "Other"
+    screening("galaxy", {
+      theaterName: "Cineplex Cinemas Normanview",
+      chain: "Galaxy"
     })
   ];
   assert.deepEqual(
     applyScreeningFilters(screenings, {
       ...EMPTY_FILTERS,
-      chains: ["Cineplex", "Other"]
+      chains: ["Cineplex", "Galaxy"]
     }).map((item) => item.id),
-    ["cineplex", "other"]
+    ["cineplex", "galaxy"]
   );
   assert.equal(
     applyScreeningFilters(screenings, { ...EMPTY_FILTERS, chains: [] }).length,

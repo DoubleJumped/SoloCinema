@@ -20,7 +20,7 @@ export const sampleScreenings: ScreeningView[] = [
     id: "cineplex-normanview-1",
     movieTitle: "Prairie Signal",
     theaterName: "Cineplex Cinemas Normanview",
-    chain: "Cineplex",
+    chain: "Galaxy",
     startsAt: "2026-06-04T02:20:00.000Z",
     format: "Regular",
     ticketUrl: "https://www.cineplex.com/theatre/cineplex-cinemas-normanview",
