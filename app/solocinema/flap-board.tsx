@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { BoardRow } from "./board-utils";
 
@@ -65,8 +66,15 @@ function Clock() {
 }
 
 export function FlapBoard({ rows, updatedLabel, counts, children }: FlapBoardProps) {
+  const router = useRouter();
   const rootRef = useRef<HTMLDivElement>(null);
   const rowsKey = rows.map((row) => row.id).join("|");
+
+  // clicking the sign flips it (wired inside the effect) and also returns
+  // the board to the default under-5 view
+  function resetToDefaultView() {
+    router.replace("/solocinema", { scroll: false });
+  }
 
   useEffect(() => {
     const root = rootRef.current;
@@ -175,7 +183,14 @@ export function FlapBoard({ rows, updatedLabel, counts, children }: FlapBoardPro
             className="logo"
             tabIndex={0}
             role="button"
-            aria-label="SoloCinema — flip the sign"
+            aria-label="SoloCinema — reset filters"
+            title="Reset filters"
+            onClick={resetToDefaultView}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                resetToDefaultView();
+              }
+            }}
           >
             {Array.from(LOGO).map((ch, index) => (
               <span
