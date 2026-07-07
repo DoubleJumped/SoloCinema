@@ -141,9 +141,39 @@ export function FlapBoard({ rows, updatedLabel, counts, children }: FlapBoardPro
     logo?.addEventListener("keydown", onLogoKey);
 
     flipLogo();
-    root
-      .querySelectorAll<HTMLElement>(".brow")
-      .forEach((row, index) => flipGroup(row, index * 70));
+
+    // The board can hold hundreds of rows. Flipping them all on mount queues
+    // tens of thousands of timers and freezes the main thread, so only animate
+    // rows as they scroll into view — each one flips once — and keep the
+    // periodic reflip limited to rows the viewer can actually see.
+    const visibleRows = new Set<HTMLElement>();
+    const flippedRows = new WeakSet<HTMLElement>();
+    let observer: IntersectionObserver | undefined;
+
+    if (!reducedMotion && "IntersectionObserver" in window) {
+      observer = new IntersectionObserver(
+        (entries) => {
+          let entered = 0;
+          for (const entry of entries) {
+            const row = entry.target as HTMLElement;
+            if (entry.isIntersecting) {
+              visibleRows.add(row);
+              if (!flippedRows.has(row)) {
+                flippedRows.add(row);
+                // stagger rows that appear together for the cascade effect
+                flipGroup(row, entered++ * 70);
+              }
+            } else {
+              visibleRows.delete(row);
+            }
+          }
+        },
+        { rootMargin: "120px 0px" }
+      );
+      root
+        .querySelectorAll<HTMLElement>(".brow")
+        .forEach((row) => observer!.observe(row));
+    }
 
     let interval: number | undefined;
     if (!reducedMotion) {
@@ -151,7 +181,7 @@ export function FlapBoard({ rows, updatedLabel, counts, children }: FlapBoardPro
         if (Math.random() < 0.33) {
           flipLogo();
         }
-        const rowEls = root.querySelectorAll<HTMLElement>(".brow");
+        const rowEls = [...visibleRows];
         if (rowEls.length) {
           flipGroup(rowEls[Math.floor(Math.random() * rowEls.length)], 0);
         }
@@ -163,6 +193,7 @@ export function FlapBoard({ rows, updatedLabel, counts, children }: FlapBoardPro
       if (interval !== undefined) {
         window.clearInterval(interval);
       }
+      observer?.disconnect();
       logo?.removeEventListener("click", flipLogo);
       logo?.removeEventListener("keydown", onLogoKey);
       root.querySelectorAll<HTMLElement>(".tile.flipping").forEach((tile) => {

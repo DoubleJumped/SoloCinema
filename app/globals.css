@@ -352,6 +352,10 @@ a {
   border-radius: 4px;
   cursor: pointer;
   transition: background 0.16s;
+  /* the board can hold hundreds of rows; skip rendering the ones that are
+     off-screen. auto lets the browser reuse the real size once measured. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 34px;
 }
 
 .brow:hover,
@@ -405,7 +409,6 @@ a {
   line-height: 1;
   color: var(--bone);
   transform-origin: center;
-  will-change: transform;
   text-shadow: 0 0 8px rgba(255, 176, 0, 0.16);
   font-style: normal;
 }
@@ -431,6 +434,10 @@ a {
 .tile.flipping .ch {
   color: var(--flip-dim) !important;
   text-shadow: none;
+  /* promote to its own layer only while actually flipping — applying
+     will-change to every tile permanently spawns tens of thousands of
+     compositor layers and locks up mobile */
+  will-change: transform;
   animation: flap 0.16s linear infinite;
 }
 
@@ -523,6 +530,8 @@ footer {
     background: linear-gradient(180deg, #211B10, #17110A);
     border: 1px solid rgba(255, 255, 255, 0.06);
     align-items: start;
+    /* card layout is taller than the desktop row */
+    contain-intrinsic-size: auto 104px;
   }
 
   .brow:hover,
