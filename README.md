@@ -135,15 +135,18 @@ Under the hood, showtime discovery uses:
 
 ```text
 GET https://apis.cineplex.com/prod/cpx/theatrical/api/v1/showtimes?language=en&locationId=4108
-Ocp-Apim-Subscription-Key: dcdac5601d864addbc2675a2e96cb1f8
+Ocp-Apim-Subscription-Key: <CINEPLEX_SUBSCRIPTION_KEY>
 ```
+
+The subscription key is Cineplex's public web-client key; set it via the
+`CINEPLEX_SUBSCRIPTION_KEY` environment variable.
 
 For each online-enabled, reserved-seating `vistaSessionId`, fetch:
 
 ```text
 GET https://apis.cineplex.com/prod/ticketing/api/v1/theatre/4108/showtime/{vistaSessionId}/seat-layout
 GET https://apis.cineplex.com/prod/ticketing/api/v1/theatre/4108/showtime/{vistaSessionId}/seat-availability?preview=true
-Ocp-Apim-Subscription-Key: dcdac5601d864addbc2675a2e96cb1f8
+Ocp-Apim-Subscription-Key: <CINEPLEX_SUBSCRIPTION_KEY>
 ```
 
 Verified on June 6, 2026 against Southland showtimes `263673` and `263674`.
