@@ -260,29 +260,34 @@ def main(argv: list[str] | None = None) -> int:
         from .cineplex import run_cineplex_collection
         from .landmark import run_landmark_collection
 
-        landmark_summary = run_landmark_collection(
-            database_url=args.database_url,
-            wait_ms=args.wait_ms,
-            max_showings=args.max_showings_per_chain,
-            probe_seats=not args.skip_seat_probe,
-            days_ahead=args.days_ahead,
-            probe_days=args.probe_days,
-        )
-        cineplex_summary = run_cineplex_collection(
-            database_url=args.database_url,
-            max_showings=args.max_showings_per_chain,
-            probe_seats=not args.skip_seat_probe,
-        )
-        print(
-            json.dumps(
-                {
-                    "landmark": asdict(landmark_summary),
-                    "cineplex": asdict(cineplex_summary),
-                },
-                indent=2,
+        # One chain failing must not stop the other from collecting.
+        output: dict[str, Any] = {}
+        errors: dict[str, str] = {}
+        try:
+            landmark_summary = run_landmark_collection(
+                database_url=args.database_url,
+                wait_ms=args.wait_ms,
+                max_showings=args.max_showings_per_chain,
+                probe_seats=not args.skip_seat_probe,
+                days_ahead=args.days_ahead,
+                probe_days=args.probe_days,
             )
-        )
-        return 0
+            output["landmark"] = asdict(landmark_summary)
+        except Exception as error:
+            errors["landmark"] = f"{type(error).__name__}: {error}"
+        try:
+            cineplex_summary = run_cineplex_collection(
+                database_url=args.database_url,
+                max_showings=args.max_showings_per_chain,
+                probe_seats=not args.skip_seat_probe,
+            )
+            output["cineplex"] = asdict(cineplex_summary)
+        except Exception as error:
+            errors["cineplex"] = f"{type(error).__name__}: {error}"
+        if errors:
+            output["errors"] = errors
+        print(json.dumps(output, indent=2))
+        return 1 if errors else 0
     raise AssertionError(f"Unhandled command {args.command}")
 
 
