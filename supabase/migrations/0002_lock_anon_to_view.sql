@@ -12,8 +12,12 @@ drop policy if exists "Public read movies" on public.movies;
 drop policy if exists "Public read showings" on public.showings;
 drop policy if exists "Public read seat snapshots" on public.seat_snapshots;
 
--- 3. Revoke direct anon access to the base tables.
-revoke select on public.theaters, public.movies, public.showings, public.seat_snapshots from anon;
+-- 3. Revoke every table privilege the anon/authenticated roles hold in public,
+-- including Supabase's default INSERT/UPDATE/DELETE/TRUNCATE grants (TRUNCATE
+-- is not governed by RLS), then stop future tables from getting those grants.
+revoke all on all tables in schema public from anon, authenticated;
+alter default privileges for role postgres in schema public
+  revoke all on tables from anon, authenticated;
 
 -- 4. Ensure anon can still read through the view.
 grant usage on schema public to anon;
