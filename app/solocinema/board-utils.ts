@@ -26,6 +26,15 @@ export function theaterCode(name: string) {
   return stripped.slice(0, CODE_WIDTH).replace(/\s+\S*$/, "");
 }
 
+export function isSafeTicketUrl(url: string): boolean {
+  try {
+    const { protocol } = new URL(url);
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 export type SeatTier = "green" | "amber" | "red" | "muted";
 
 export function seatTier(occupied: number | null): SeatTier {

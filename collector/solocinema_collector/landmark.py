@@ -20,6 +20,7 @@ from .atom import (
 from .models import Movie, ScrapeRun, SeatParseResult, SeatSnapshot, Showing, Theater
 from .playwright_probe import probe_seat_map
 from .storage import Repository, repository_from_url
+from .url_guard import is_http_url, require_allowed_url
 
 
 LANDMARK_REGINA_URL = "https://as.landmarkcinemas.com/showtimes/regina"
@@ -641,12 +642,16 @@ def _url_from_dict(value: dict[str, Any], base_url: str, keys: set[str]) -> str 
     raw = _first_text(value, keys)
     if not raw:
         return None
-    return urljoin(base_url, raw)
+    resolved = urljoin(base_url, raw)
+    return resolved if is_http_url(resolved) else None
 
 
 def _first_url_from_attrs(attrs: dict[str, Any], base_url: str, keys: set[str]) -> str | None:
     raw = _first_text(attrs, keys)
-    return urljoin(base_url, raw) if raw else None
+    if not raw:
+        return None
+    resolved = urljoin(base_url, raw)
+    return resolved if is_http_url(resolved) else None
 
 
 def _first_text(value: dict[str, Any], keys: set[str]) -> str | None:
@@ -748,6 +753,7 @@ def _insert_failed_snapshot(
 
 def _probe_showing_seats(showing: LandmarkShowing) -> SeatParseResult:
     url = showing.seat_map_url or showing.ticket_url
+    require_allowed_url(url)
     if "atomtickets.com/checkout/" in url:
         return probe_atom_checkout_seat_map(url)
     return asyncio.run(probe_seat_map(url))

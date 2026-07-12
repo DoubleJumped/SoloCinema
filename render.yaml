@@ -14,3 +14,5 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
+      - key: CINEPLEX_SUBSCRIPTION_KEY
+        sync: false

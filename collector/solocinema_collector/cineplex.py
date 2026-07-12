@@ -13,13 +13,11 @@ from zoneinfo import ZoneInfo
 from .landmark import normalize_movie_title
 from .models import Movie, ScrapeRun, SeatParseResult, SeatSnapshot, Showing, Theater
 from .storage import Repository, repository_from_url
+from .url_guard import require_allowed_url
 
 
 CINEPLEX_API_BASE = "https://apis.cineplex.com/prod"
-CINEPLEX_SUBSCRIPTION_KEY = (
-    os.environ.get("CINEPLEX_SUBSCRIPTION_KEY")
-    or "dcdac5601d864addbc2675a2e96cb1f8"
-)
+CINEPLEX_SUBSCRIPTION_KEY = os.environ.get("CINEPLEX_SUBSCRIPTION_KEY")
 CINEPLEX_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
@@ -166,7 +164,7 @@ class CineplexCollectionSummary:
 
 def discover_cineplex_showings(
     location_id: str = "4108",
-    subscription_key: str = CINEPLEX_SUBSCRIPTION_KEY,
+    subscription_key: str | None = CINEPLEX_SUBSCRIPTION_KEY,
 ) -> list[CineplexShowing]:
     payload = _open_json(_showtimes_url(location_id), subscription_key=subscription_key)
     theater = theater_for_location(location_id)
@@ -194,7 +192,7 @@ def extract_cineplex_showings(
 
 def probe_cineplex_seat_map(
     showing: CineplexShowing,
-    subscription_key: str = CINEPLEX_SUBSCRIPTION_KEY,
+    subscription_key: str | None = CINEPLEX_SUBSCRIPTION_KEY,
 ) -> SeatParseResult:
     layout = _open_json(
         _seat_layout_url(showing.location_id, showing.vista_session_id),
@@ -250,7 +248,7 @@ def run_cineplex_collection(
     location_ids: list[str] | None = None,
     max_showings: int | None = None,
     probe_seats: bool = True,
-    subscription_key: str = CINEPLEX_SUBSCRIPTION_KEY,
+    subscription_key: str | None = CINEPLEX_SUBSCRIPTION_KEY,
 ) -> CineplexCollectionSummary:
     showings: list[CineplexShowing] = []
     for location_id in location_ids or list(CINEPLEX_REGINA_THEATERS):
@@ -274,7 +272,7 @@ def write_cineplex_showings(
     showings: list[CineplexShowing],
     database_url: str,
     probe_seats: bool = True,
-    subscription_key: str = CINEPLEX_SUBSCRIPTION_KEY,
+    subscription_key: str | None = CINEPLEX_SUBSCRIPTION_KEY,
 ) -> CineplexCollectionSummary:
     run_id = repository.start_run(ScrapeRun(chain="Cineplex"))
     checked = 0
@@ -637,7 +635,10 @@ def _run_status(checked: int, failed: int) -> str:
     return "failed"
 
 
-def _open_json(url: str, subscription_key: str) -> Any:
+def _open_json(url: str, subscription_key: str | None) -> Any:
+    if not subscription_key:
+        raise RuntimeError("CINEPLEX_SUBSCRIPTION_KEY is not set")
+    require_allowed_url(url)
     request = Request(
         url,
         headers={

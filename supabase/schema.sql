@@ -61,8 +61,7 @@ create index if not exists showings_movie_id_idx on public.showings(movie_id);
 create index if not exists seat_snapshots_showing_checked_idx
   on public.seat_snapshots(showing_id, checked_at desc);
 
-create or replace view public.solocinema_screenings
-with (security_invoker = true) as
+create or replace view public.solocinema_screenings as
 select
   s.id::text as showing_id,
   m.source_title as movie_title,
@@ -95,26 +94,8 @@ alter table public.showings enable row level security;
 alter table public.seat_snapshots enable row level security;
 alter table public.scrape_runs enable row level security;
 
-drop policy if exists "Public read theaters" on public.theaters;
-create policy "Public read theaters"
-  on public.theaters for select
-  using (true);
-
-drop policy if exists "Public read movies" on public.movies;
-create policy "Public read movies"
-  on public.movies for select
-  using (true);
-
-drop policy if exists "Public read showings" on public.showings;
-create policy "Public read showings"
-  on public.showings for select
-  using (true);
-
-drop policy if exists "Public read seat snapshots" on public.seat_snapshots;
-create policy "Public read seat snapshots"
-  on public.seat_snapshots for select
-  using (true);
-
+-- Anon reads only through the definer-rights view above; the base tables have
+-- RLS enabled with no anon policies, so direct table access returns nothing.
+-- The collector writes with the service-role key, which bypasses RLS.
 grant usage on schema public to anon;
 grant select on public.solocinema_screenings to anon;
-grant select on public.theaters, public.movies, public.showings, public.seat_snapshots to anon;

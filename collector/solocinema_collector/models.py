@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Literal
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 
 SeatStatus = Literal["available", "unknown", "failed", "unavailable"]
@@ -35,6 +36,13 @@ class Showing(BaseModel):
     source_id: str
     format: str | None = None
     auditorium: str | None = None
+
+    @field_validator("ticket_url")
+    @classmethod
+    def _ticket_url_must_be_http(cls, value: HttpUrl | str) -> HttpUrl | str:
+        if urlsplit(str(value)).scheme not in ("http", "https"):
+            raise ValueError("ticket_url must be an http(s) URL")
+        return value
 
 
 class SeatSnapshot(BaseModel):

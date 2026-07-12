@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { BoardRow } from "./board-utils";
+import { isSafeTicketUrl, type BoardRow } from "./board-utils";
 
 const CHARSET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/:&+- ";
 const LOGO = "SOLOCINEMA";
@@ -257,30 +257,43 @@ export function FlapBoard({ rows, updatedLabel, counts, children }: FlapBoardPro
           <div className="hlabel">Seats Taken</div>
         </div>
         <div className="rows">
-          {rows.map((row) => (
-            <a
-              key={row.id}
-              className="brow grid-cols"
-              href={row.ticketUrl}
-              target="_blank"
-              rel="noreferrer"
-              aria-label={row.aria}
-            >
-              <Cell text={row.time} count={COLS.time} color="c-amber" extra="cell--time" />
-              <Cell text={row.date} count={COLS.date} color="c-muted" extra="cell--date" />
-              <Cell text={row.film} count={COLS.film} extra="cell--film" />
-              <Cell text={row.theatre} count={COLS.theatre} extra="cell--theatre" />
-              <Cell
-                text={row.seats}
-                count={COLS.seats}
-                color={`c-${row.tier}`}
-                extra="cell--seats"
-              />
-              <div className="card-plain">
-                <b>{row.theatre}</b> &nbsp;·&nbsp; {row.date}
+          {rows.map((row) => {
+            const cells = (
+              <>
+                <Cell text={row.time} count={COLS.time} color="c-amber" extra="cell--time" />
+                <Cell text={row.date} count={COLS.date} color="c-muted" extra="cell--date" />
+                <Cell text={row.film} count={COLS.film} extra="cell--film" />
+                <Cell text={row.theatre} count={COLS.theatre} extra="cell--theatre" />
+                <Cell
+                  text={row.seats}
+                  count={COLS.seats}
+                  color={`c-${row.tier}`}
+                  extra="cell--seats"
+                />
+                <div className="card-plain">
+                  <b>{row.theatre}</b> &nbsp;·&nbsp; {row.date}
+                </div>
+              </>
+            );
+            // Only link out when the ticket URL is a real http(s) URL; anything
+            // else (a scraped javascript:/data: value, or empty) renders inert.
+            return isSafeTicketUrl(row.ticketUrl) ? (
+              <a
+                key={row.id}
+                className="brow grid-cols"
+                href={row.ticketUrl}
+                target="_blank"
+                rel="noreferrer"
+                aria-label={row.aria}
+              >
+                {cells}
+              </a>
+            ) : (
+              <div key={row.id} className="brow grid-cols" aria-label={row.aria}>
+                {cells}
               </div>
-            </a>
-          ))}
+            );
+          })}
         </div>
         {rows.length === 0 ? (
           <div className="board-empty">

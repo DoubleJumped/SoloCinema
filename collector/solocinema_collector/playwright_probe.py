@@ -6,9 +6,11 @@ from typing import Any
 
 from .models import SeatParseResult
 from .seat_parser import parse_dom_seats, parse_structured_seats
+from .url_guard import require_allowed_url
 
 
 async def probe_seat_map(url: str, wait_ms: int = 5000) -> SeatParseResult:
+    require_allowed_url(url)
     try:
         from playwright.async_api import async_playwright
     except ImportError as error:

@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 from .models import SeatParseResult
 from .seat_parser import parse_atom_seat_map_fragments
+from .url_guard import require_allowed_url
 
 
 ATOM_LANDMARK_REGINA_URL = "https://www.atomtickets.com/theaters/landmark-cinemas-regina/49885"
@@ -92,6 +93,7 @@ def _opener():
 
 
 def _open_text(url: str, opener: Any | None = None) -> str:
+    require_allowed_url(url)
     request = Request(url, headers={"User-Agent": ATOM_USER_AGENT})
     response = (opener or _opener()).open(request, timeout=30)
     charset = response.headers.get_content_charset() or "utf-8"
