@@ -136,7 +136,7 @@ export function FilterRail({
       <div className="fgroup" role="group" aria-label="Occupancy">
         <button
           type="button"
-          className="switch"
+          className="switch occupancy"
           aria-pressed={!showAll}
           onClick={() => navigate(filters, !showAll)}
         >

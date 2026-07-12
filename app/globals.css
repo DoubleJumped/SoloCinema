@@ -514,6 +514,54 @@ footer {
 
 /* ---------- RESPONSIVE: CARD MODE ---------- */
 @media (max-width: 800px) {
+  /* filter strip becomes an even grid: switches line up in tidy rows
+     instead of ragged flex-wrap, selects go full width */
+  .filters {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .filters .divider {
+    display: none;
+  }
+
+  .fgroup {
+    display: contents;
+  }
+
+  .switch {
+    justify-content: center;
+    gap: 6px;
+    letter-spacing: 0.1em;
+    padding: 9px 6px;
+    min-height: 38px;
+    white-space: nowrap;
+    grid-column: span 2;
+  }
+
+  .switch.time {
+    grid-column: span 3;
+  }
+
+  .switch.occupancy {
+    grid-column: span 4;
+  }
+
+  .switch.reset {
+    grid-column: span 2;
+  }
+
+  .fselect {
+    grid-column: 1 / -1;
+    width: 100%;
+    max-width: none;
+    min-height: 38px;
+    padding-top: 9px;
+    padding-bottom: 9px;
+  }
+
   .board-head { display: none; }
   .board { padding: 12px; }
   .rows { gap: 10px; }
