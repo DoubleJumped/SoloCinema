@@ -401,7 +401,10 @@ a {
     inset 0 -2px 3px rgba(0, 0, 0, 0.45), 0 1px 1px rgba(0, 0, 0, 0.4);
 }
 
-.tile .ch {
+/* the character lives in a pseudo-element so each tile is a single DOM node;
+   JS flips it by setting data-flip + .flipping, then removing both */
+.tile::after {
+  content: attr(data-ch);
   display: inline-block;
   font-family: var(--font-board);
   font-weight: 600;
@@ -413,10 +416,10 @@ a {
   font-style: normal;
 }
 
-.tile.c-amber .ch { color: var(--amber); }
-.tile.c-green .ch { color: var(--green); }
-.tile.c-red .ch { color: var(--red); }
-.tile.c-muted .ch { color: var(--muted); }
+.tile.c-amber::after { color: var(--amber); }
+.tile.c-green::after { color: var(--green); }
+.tile.c-red::after { color: var(--red); }
+.tile.c-muted::after { color: var(--muted); }
 
 .tile.tile-logo {
   --lc: clamp(24px, 3.8vw, 48px);
@@ -425,13 +428,14 @@ a {
   border-radius: 3px;
 }
 
-.tile.tile-logo .ch {
+.tile.tile-logo::after {
   font-family: var(--font-sign);
   font-weight: 700;
   font-size: calc(var(--lc) * 1.02);
 }
 
-.tile.flipping .ch {
+.tile.flipping::after {
+  content: attr(data-flip);
   color: var(--flip-dim) !important;
   text-shadow: none;
   /* promote to its own layer only while actually flipping — applying
@@ -611,6 +615,6 @@ footer {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tile.flipping .ch { animation: none; }
+  .tile.flipping::after { animation: none; }
   .pulse { animation: none; }
 }

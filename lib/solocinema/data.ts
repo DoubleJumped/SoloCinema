@@ -32,7 +32,10 @@ export async function getSoloCinemaShowings(): Promise<ScreeningView[]> {
         apikey: supabaseKey,
         Authorization: `Bearer ${supabaseKey}`
       },
-      cache: "no-store"
+      // The collector only writes every 15 minutes, so serve a cached response
+      // for up to a minute instead of hitting Supabase on every page view.
+      // (An explicit revalidate overrides the page's force-dynamic default.)
+      next: { revalidate: 60 }
     }
   );
 

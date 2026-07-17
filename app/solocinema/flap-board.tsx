@@ -9,6 +9,10 @@ const LOGO = "SOLOCINEMA";
 const COLS = { time: 5, date: 6, film: 24, theatre: 13, seats: 6 } as const;
 const FLIP_STEP_MS = 105;
 const REFLIP_EVERY_MS = 17000;
+// Server-render only the first screenful of rows; the rest stream in as the
+// viewer scrolls so a big board doesn't ship megabytes of tile markup.
+const INITIAL_ROWS = 40;
+const ROW_CHUNK = 40;
 
 type FlapBoardProps = {
   rows: BoardRow[];
@@ -32,13 +36,13 @@ function Cell({
   return (
     <div className={`cell ${extra}`}>
       {Array.from(padded).map((ch, index) => (
+        // the character itself renders via CSS `content: attr(data-ch)` so
+        // each tile costs one element instead of two
         <span
           key={index}
           className={`tile${ch !== " " && color ? ` ${color}` : ""}`}
           data-ch={ch}
-        >
-          <b className="ch">{ch}</b>
-        </span>
+        />
       ))}
     </div>
   );
@@ -68,7 +72,36 @@ function Clock() {
 export function FlapBoard({ rows, updatedLabel, counts, children }: FlapBoardProps) {
   const router = useRouter();
   const rootRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
   const rowsKey = rows.map((row) => row.id).join("|");
+  const [visibleCount, setVisibleCount] = useState(INITIAL_ROWS);
+  const shownRows = rows.slice(0, visibleCount);
+
+  // start over from the first screenful whenever the filters change the rows
+  useEffect(() => {
+    setVisibleCount(INITIAL_ROWS);
+  }, [rowsKey]);
+
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) {
+      return;
+    }
+    if (!("IntersectionObserver" in window)) {
+      setVisibleCount(rows.length);
+      return;
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setVisibleCount((count) => Math.min(count + ROW_CHUNK, rows.length));
+        }
+      },
+      { rootMargin: "600px 0px" }
+    );
+    io.observe(sentinel);
+    return () => io.disconnect();
+  }, [rowsKey, visibleCount, rows.length]);
 
   // clicking the sign flips it (wired inside the effect) and also returns
   // the board to the default under-5 view
@@ -98,23 +131,24 @@ export function FlapBoard({ rows, updatedLabel, counts, children }: FlapBoardPro
       return CHARSET.charAt(Math.floor(Math.random() * CHARSET.length));
     }
 
+    // While flipping, the tile shows `data-flip` instead of `data-ch` (see
+    // .tile.flipping::after); removing the class reveals the real character.
     function flipTile(tile: HTMLElement, delay: number) {
-      const ch = tile.querySelector<HTMLElement>(".ch");
-      const final = tile.dataset.ch ?? " ";
-      if (!ch || reducedMotion) {
+      if (reducedMotion) {
         return;
       }
       later(() => {
+        tile.setAttribute("data-flip", randChar());
         tile.classList.add("flipping");
         const steps = 3 + Math.floor(Math.random() * 4);
-        for (let step = 0; step < steps; step++) {
+        for (let step = 1; step < steps; step++) {
           later(() => {
-            ch.textContent = randChar();
+            tile.setAttribute("data-flip", randChar());
           }, step * FLIP_STEP_MS);
         }
         later(() => {
-          ch.textContent = final;
           tile.classList.remove("flipping");
+          tile.removeAttribute("data-flip");
         }, (steps + 1) * FLIP_STEP_MS);
       }, delay);
     }
@@ -149,6 +183,7 @@ export function FlapBoard({ rows, updatedLabel, counts, children }: FlapBoardPro
     const visibleRows = new Set<HTMLElement>();
     const flippedRows = new WeakSet<HTMLElement>();
     let observer: IntersectionObserver | undefined;
+    let rowWatcher: MutationObserver | undefined;
 
     if (!reducedMotion && "IntersectionObserver" in window) {
       observer = new IntersectionObserver(
@@ -173,6 +208,22 @@ export function FlapBoard({ rows, updatedLabel, counts, children }: FlapBoardPro
       root
         .querySelectorAll<HTMLElement>(".brow")
         .forEach((row) => observer!.observe(row));
+
+      // rows mount lazily as the viewer scrolls — watch for them so they get
+      // the same flip-into-view treatment without re-running this effect
+      const rowsHost = root.querySelector(".rows");
+      if (rowsHost) {
+        rowWatcher = new MutationObserver((mutations) => {
+          for (const mutation of mutations) {
+            mutation.addedNodes.forEach((node) => {
+              if (node instanceof HTMLElement && node.classList.contains("brow")) {
+                observer!.observe(node);
+              }
+            });
+          }
+        });
+        rowWatcher.observe(rowsHost, { childList: true });
+      }
     }
 
     let interval: number | undefined;
@@ -194,14 +245,12 @@ export function FlapBoard({ rows, updatedLabel, counts, children }: FlapBoardPro
         window.clearInterval(interval);
       }
       observer?.disconnect();
+      rowWatcher?.disconnect();
       logo?.removeEventListener("click", flipLogo);
       logo?.removeEventListener("keydown", onLogoKey);
       root.querySelectorAll<HTMLElement>(".tile.flipping").forEach((tile) => {
         tile.classList.remove("flipping");
-        const ch = tile.querySelector<HTMLElement>(".ch");
-        if (ch) {
-          ch.textContent = tile.dataset.ch ?? " ";
-        }
+        tile.removeAttribute("data-flip");
       });
     };
   }, [rowsKey]);
@@ -229,9 +278,7 @@ export function FlapBoard({ rows, updatedLabel, counts, children }: FlapBoardPro
                 className={`tile tile-logo${index >= 4 ? " c-amber" : ""}`}
                 data-ch={ch}
                 aria-hidden="true"
-              >
-                <b className="ch">{ch}</b>
-              </span>
+              />
             ))}
           </h1>
         </div>
@@ -257,7 +304,7 @@ export function FlapBoard({ rows, updatedLabel, counts, children }: FlapBoardPro
           <div className="hlabel">Seats Taken</div>
         </div>
         <div className="rows">
-          {rows.map((row) => {
+          {shownRows.map((row) => {
             const cells = (
               <>
                 <Cell text={row.time} count={COLS.time} color="c-amber" extra="cell--time" />
@@ -295,6 +342,9 @@ export function FlapBoard({ rows, updatedLabel, counts, children }: FlapBoardPro
             );
           })}
         </div>
+        {visibleCount < rows.length ? (
+          <div ref={sentinelRef} className="rows-sentinel" aria-hidden="true" />
+        ) : null}
         {rows.length === 0 ? (
           <div className="board-empty">
             No screenings match — try another date or turn{" "}
