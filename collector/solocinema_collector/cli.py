@@ -284,6 +284,14 @@ def main(argv: list[str] | None = None) -> int:
             output["cineplex"] = asdict(cineplex_summary)
         except Exception as error:
             errors["cineplex"] = f"{type(error).__name__}: {error}"
+        # Trim snapshot history for finished showings, keeping each showing's
+        # final seat counts (see prune_seat_snapshots in supabase/schema.sql).
+        try:
+            output["pruned_snapshots"] = repository_from_url(
+                args.database_url
+            ).prune_snapshots()
+        except Exception as error:
+            errors["prune"] = f"{type(error).__name__}: {error}"
         if errors:
             output["errors"] = errors
         print(json.dumps(output, indent=2))

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from collector.solocinema_collector.models import Movie, SeatSnapshot, Showing, Theater
@@ -58,6 +58,92 @@ class SQLiteRepositoryTests(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["movie_title"], "The Quiet Frame")
             self.assertEqual(rows[0]["inferred_occupied"], 2)
+
+    def test_prune_keeps_final_counts_for_finished_showings(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_url = f"sqlite:///{Path(directory) / 'solocinema.sqlite'}"
+            repository = SQLiteRepository(database_url)
+            repository.init_schema()
+
+            repository.upsert_theater(
+                Theater(
+                    chain="Landmark",
+                    name="Landmark Cinemas 8 Regina",
+                    city="Regina",
+                    external_id="landmark-regina",
+                    ticketing_url="https://as.landmarkcinemas.com/showtimes/regina",
+                )
+            )
+            repository.upsert_movie(
+                Movie(
+                    normalized_title="the-quiet-frame",
+                    source_title="The Quiet Frame",
+                )
+            )
+
+            now = datetime.now(timezone.utc)
+
+            def add_showing(source_id: str, starts_at: datetime) -> None:
+                repository.upsert_showing(
+                    Showing(
+                        theater_external_id="landmark-regina",
+                        movie_normalized_title="the-quiet-frame",
+                        starts_at=starts_at,
+                        ticket_url="https://as.landmarkcinemas.com/showtimes/regina",
+                        source_id=source_id,
+                    )
+                )
+
+            def add_snapshot(
+                source_id: str, checked_at: datetime, occupied: int | None
+            ) -> int:
+                return repository.insert_snapshot(
+                    SeatSnapshot(
+                        showing_source_id=source_id,
+                        checked_at=checked_at,
+                        inferred_occupied=occupied,
+                        available_seats=82 - occupied if occupied is not None else None,
+                        total_sellable_seats=82 if occupied is not None else None,
+                        raw_status="available" if occupied is not None else "failed",
+                        confidence="high" if occupied is not None else "low",
+                    )
+                )
+
+            # finished two days ago: three timed snapshots, then a failed probe
+            add_showing("finished", now - timedelta(days=2))
+            add_snapshot("finished", now - timedelta(days=2, hours=3), 1)
+            add_snapshot("finished", now - timedelta(days=2, hours=2), 4)
+            final_with_data = add_snapshot(
+                "finished", now - timedelta(days=2, hours=1), 9
+            )
+            failed_after = add_snapshot("finished", now - timedelta(days=2, minutes=30), None)
+
+            # upcoming tonight: history must be untouched
+            add_showing("upcoming", now + timedelta(hours=4))
+            upcoming_ids = {
+                add_snapshot("upcoming", now - timedelta(hours=2), 0),
+                add_snapshot("upcoming", now - timedelta(hours=1), 3),
+            }
+
+            deleted = repository.prune_snapshots()
+            self.assertEqual(deleted, 2)
+
+            with repository.connect() as connection:
+                kept = {
+                    row["id"]: row["inferred_occupied"]
+                    for row in connection.execute(
+                        "select id, inferred_occupied from seat_snapshots"
+                    )
+                }
+            # the last snapshot with data and the last overall both survive
+            self.assertIn(final_with_data, kept)
+            self.assertEqual(kept[final_with_data], 9)
+            self.assertIn(failed_after, kept)
+            self.assertTrue(upcoming_ids.issubset(kept))
+            self.assertEqual(len(kept), 4)
+
+            # running again removes nothing further
+            self.assertEqual(repository.prune_snapshots(), 0)
 
 
 if __name__ == "__main__":

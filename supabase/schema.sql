@@ -99,3 +99,46 @@ alter table public.scrape_runs enable row level security;
 -- The collector writes with the service-role key, which bypasses RLS.
 grant usage on schema public to anon;
 grant select on public.solocinema_screenings to anon;
+
+-- Called by the collector after each run. For showings that started more than
+-- `keep_after` ago, deletes the snapshot history but always keeps the latest
+-- snapshot and the latest one with seat numbers, so final tickets-sold /
+-- seats-available figures per showing survive permanently.
+create or replace function public.prune_seat_snapshots(
+  keep_after interval default interval '6 hours'
+)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  deleted integer;
+begin
+  delete from public.seat_snapshots ss
+  where ss.showing_id in (
+      select s.id from public.showings s
+      where s.starts_at < now() - keep_after
+    )
+    and exists (
+      select 1 from public.seat_snapshots newer
+      where newer.showing_id = ss.showing_id
+        and (newer.checked_at > ss.checked_at
+          or (newer.checked_at = ss.checked_at and newer.id > ss.id))
+    )
+    and (ss.inferred_occupied is null
+      or exists (
+        select 1 from public.seat_snapshots newer
+        where newer.showing_id = ss.showing_id
+          and newer.inferred_occupied is not null
+          and (newer.checked_at > ss.checked_at
+            or (newer.checked_at = ss.checked_at and newer.id > ss.id))
+      ));
+  get diagnostics deleted = row_count;
+  return deleted;
+end;
+$$;
+
+revoke all on function public.prune_seat_snapshots(interval) from public;
+revoke all on function public.prune_seat_snapshots(interval) from anon, authenticated;
+grant execute on function public.prune_seat_snapshots(interval) to service_role;

@@ -6,7 +6,7 @@ import sqlite3
 import urllib.parse
 import urllib.request
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterator, Protocol
 
@@ -79,6 +79,7 @@ class Repository(Protocol):
         self, run_id: str | int, status: str, count_checked: int, count_failed: int
     ) -> None: ...
     def list_screenings(self) -> list[Any]: ...
+    def prune_snapshots(self, keep_after_hours: int = 6) -> int: ...
 
 
 def repository_from_url(database_url: str) -> Repository:
@@ -293,6 +294,40 @@ class SQLiteRepository:
                 )
             )
 
+    def prune_snapshots(self, keep_after_hours: int = 6) -> int:
+        # For showings that started more than keep_after_hours ago, delete the
+        # snapshot history but keep the latest snapshot and the latest one with
+        # seat numbers, so final tickets-sold / seats-available figures per
+        # showing survive. Mirrors prune_seat_snapshots() in supabase/schema.sql.
+        cutoff = (datetime.now(UTC) - timedelta(hours=keep_after_hours)).isoformat()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """
+                delete from seat_snapshots
+                where showing_id in (
+                    select id from showings where datetime(starts_at) < datetime(?)
+                  )
+                  and exists (
+                    select 1 from seat_snapshots newer
+                    where newer.showing_id = seat_snapshots.showing_id
+                      and (datetime(newer.checked_at) > datetime(seat_snapshots.checked_at)
+                        or (datetime(newer.checked_at) = datetime(seat_snapshots.checked_at)
+                          and newer.id > seat_snapshots.id))
+                  )
+                  and (inferred_occupied is null
+                    or exists (
+                      select 1 from seat_snapshots newer
+                      where newer.showing_id = seat_snapshots.showing_id
+                        and newer.inferred_occupied is not null
+                        and (datetime(newer.checked_at) > datetime(seat_snapshots.checked_at)
+                          or (datetime(newer.checked_at) = datetime(seat_snapshots.checked_at)
+                            and newer.id > seat_snapshots.id))
+                    ))
+                """,
+                (cutoff,),
+            )
+            return cursor.rowcount
+
 
 class SupabaseRepository:
     def __init__(self, supabase_url: str, service_role_key: str) -> None:
@@ -414,6 +449,16 @@ class SupabaseRepository:
 
     def list_screenings(self) -> list[dict[str, Any]]:
         return self._request("GET", "solocinema_screenings")
+
+    def prune_snapshots(self, keep_after_hours: int = 6) -> int:
+        # Runs the prune_seat_snapshots() database function from
+        # supabase/migrations/0003_prune_seat_snapshots.sql.
+        rows = self._request(
+            "POST",
+            "rpc/prune_seat_snapshots",
+            payload={"keep_after": f"{keep_after_hours} hours"},
+        )
+        return int(rows[0]) if rows else 0
 
     def _lookup_id(self, table: str, column: str, value: str) -> str:
         rows = self._request(
