@@ -251,7 +251,7 @@ def run_imax_collection(
     database_url: str,
     max_showings: int | None = None,
     probe_seats: bool = True,
-    probe_days: int = 2,
+    probe_days: int = 3,
 ) -> ImaxCollectionSummary:
     showings = discover_imax_showings()
     if max_showings is not None:
@@ -273,7 +273,7 @@ def write_imax_showings(
     showings: list[ImaxShowing],
     database_url: str,
     probe_seats: bool = True,
-    probe_days: int = 2,
+    probe_days: int = 3,
     now: datetime | None = None,
 ) -> ImaxCollectionSummary:
     run_id = repository.start_run(ScrapeRun(chain="Other"))

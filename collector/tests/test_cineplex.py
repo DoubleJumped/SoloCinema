@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 from collector.solocinema_collector.cineplex import (
     CineplexShowing,
@@ -207,6 +208,51 @@ class CineplexCollectorTests(unittest.TestCase):
             self.assertEqual(rows[0]["movie_title"], "The Quiet Frame")
             self.assertEqual(rows[0]["theater_name"], "Cineplex Cinemas Southland")
             self.assertEqual(rows[0]["raw_status"], "unknown")
+
+    def test_write_cineplex_showings_defers_probe_beyond_window(self) -> None:
+        def make_showing(name: str, starts_at: datetime) -> CineplexShowing:
+            return CineplexShowing(
+                movie_title=name,
+                starts_at=starts_at,
+                ticket_url=f"https://www.cineplex.com/ticketing/4108/{name}",
+                source_id=f"cineplex-southland-cineplex-{name}",
+                vista_session_id=name,
+                location_id="4108",
+                theater_external_id="cineplex-southland",
+                is_online_ticketing_enabled=True,
+                is_reserved_seating=True,
+            )
+
+        # July 5 and July 8, Regina time (UTC-6)
+        near = make_showing("near", datetime(2026, 7, 6, 1, 15, tzinfo=UTC))
+        far = make_showing("far", datetime(2026, 7, 9, 1, 15, tzinfo=UTC))
+        probed: list[str] = []
+
+        def fake_probe(showing: CineplexShowing, subscription_key=None):
+            probed.append(showing.source_id)
+            from collector.solocinema_collector.cineplex import _unknown_result
+
+            return _unknown_result("probed")
+
+        with tempfile.TemporaryDirectory() as directory:
+            database_url = f"sqlite:///{Path(directory) / 'solocinema.sqlite'}"
+            repository = SQLiteRepository(database_url)
+            repository.init_schema()
+            with patch(
+                "collector.solocinema_collector.cineplex.probe_cineplex_seat_map",
+                side_effect=fake_probe,
+            ):
+                summary = write_cineplex_showings(
+                    repository,
+                    [near, far],
+                    database_url=database_url,
+                    probe_seats=True,
+                    probe_until=date(2026, 7, 6),
+                )
+
+        self.assertEqual(summary.status, "success")
+        self.assertEqual(summary.checked, 2)
+        self.assertEqual(probed, ["cineplex-southland-cineplex-near"])
 
 
 if __name__ == "__main__":

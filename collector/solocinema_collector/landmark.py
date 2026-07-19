@@ -30,7 +30,7 @@ LANDMARK_REGINA_EXTERNAL_ID = "landmark-regina"
 # days isn't decision-relevant yet and probing all of them would multiply the
 # per-run load on the theatre sites.
 DEFAULT_DAYS_AHEAD = 7
-DEFAULT_PROBE_DAYS = 2
+DEFAULT_PROBE_DAYS = 3
 REGINA_TZ = ZoneInfo("America/Regina")
 LANDMARK_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 "

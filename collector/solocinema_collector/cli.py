@@ -85,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
     run_landmark.add_argument(
         "--probe-days",
         type=int,
-        default=2,
+        default=3,
         help="Open seat maps only for showings within the first N days.",
     )
     run_landmark.add_argument(
@@ -103,6 +103,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Cineplex location id. Can be passed more than once; defaults to Regina locations.",
     )
     run_cineplex.add_argument("--max-showings", type=int)
+    run_cineplex.add_argument(
+        "--probe-days",
+        type=int,
+        default=3,
+        help="Open seat maps only for showings within the first N days.",
+    )
     run_cineplex.add_argument(
         "--skip-seat-probe",
         action="store_true",
@@ -122,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
     run_imax.add_argument(
         "--probe-days",
         type=int,
-        default=2,
+        default=3,
         help="Open seat maps only for showings within the first N days.",
     )
     run_imax.add_argument(
@@ -144,8 +150,8 @@ def main(argv: list[str] | None = None) -> int:
     run_all.add_argument(
         "--probe-days",
         type=int,
-        default=2,
-        help="Open Landmark seat maps only for showings within the first N days.",
+        default=3,
+        help="Open seat maps only for showings within the first N days (all chains).",
     )
     run_all.add_argument(
         "--skip-seat-probe",
@@ -273,6 +279,7 @@ def main(argv: list[str] | None = None) -> int:
             location_ids=args.location_ids,
             max_showings=args.max_showings,
             probe_seats=not args.skip_seat_probe,
+            probe_days=args.probe_days,
         )
         print(summary_to_json(summary))
         return 0
@@ -331,6 +338,7 @@ def main(argv: list[str] | None = None) -> int:
                 database_url=args.database_url,
                 max_showings=args.max_showings_per_chain,
                 probe_seats=not args.skip_seat_probe,
+                probe_days=args.probe_days,
             )
             output["cineplex"] = asdict(cineplex_summary)
         except Exception as error:
@@ -340,6 +348,7 @@ def main(argv: list[str] | None = None) -> int:
                 database_url=args.database_url,
                 max_showings=args.max_showings_per_chain,
                 probe_seats=not args.skip_seat_probe,
+                probe_days=args.probe_days,
             )
             output["imax"] = asdict(imax_summary)
         except Exception as error:

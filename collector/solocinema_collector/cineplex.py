@@ -4,7 +4,7 @@ import json
 import os
 import re
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -23,6 +23,10 @@ CINEPLEX_USER_AGENT = (
     "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
 )
 REGINA_TZ = ZoneInfo("America/Regina")
+# Seat sales for regular showings barely move more than a couple of days out
+# (see docs/imax-research.md's probe-window analysis), so only open seat maps
+# for showings starting within this many Regina calendar days.
+DEFAULT_PROBE_DAYS = 3
 
 CINEPLEX_REGINA_THEATERS = {
     "4108": Theater(
@@ -248,6 +252,7 @@ def run_cineplex_collection(
     location_ids: list[str] | None = None,
     max_showings: int | None = None,
     probe_seats: bool = True,
+    probe_days: int = DEFAULT_PROBE_DAYS,
     subscription_key: str | None = CINEPLEX_SUBSCRIPTION_KEY,
 ) -> CineplexCollectionSummary:
     showings: list[CineplexShowing] = []
@@ -256,13 +261,19 @@ def run_cineplex_collection(
     if max_showings is not None:
         showings = showings[:max_showings]
 
+    probe_until = (
+        datetime.now(REGINA_TZ).date() + timedelta(days=probe_days - 1)
+        if probe_days > 0
+        else None
+    )
     repository = repository_from_url(database_url)
     repository.init_schema()
     return write_cineplex_showings(
         repository,
         showings,
         database_url=database_url,
-        probe_seats=probe_seats,
+        probe_seats=probe_seats and probe_days > 0,
+        probe_until=probe_until,
         subscription_key=subscription_key,
     )
 
@@ -272,6 +283,7 @@ def write_cineplex_showings(
     showings: list[CineplexShowing],
     database_url: str,
     probe_seats: bool = True,
+    probe_until: date | None = None,
     subscription_key: str | None = CINEPLEX_SUBSCRIPTION_KEY,
 ) -> CineplexCollectionSummary:
     run_id = repository.start_run(ScrapeRun(chain="Cineplex"))
@@ -302,10 +314,14 @@ def write_cineplex_showings(
                     )
                 )
                 parsed = _unknown_result("Seat probe skipped")
-                if probe_seats and _can_probe_seats(showing):
-                    parsed = probe_cineplex_seat_map(showing, subscription_key=subscription_key)
-                elif probe_seats:
+                if probe_seats and not _can_probe_seats(showing):
                     parsed = _unknown_result("Cineplex showing is not online reserved seating")
+                elif probe_seats and not _within_probe_window(showing, probe_until):
+                    parsed = _unknown_result(
+                        f"Seat probe deferred (showing is after {probe_until})"
+                    )
+                elif probe_seats:
+                    parsed = probe_cineplex_seat_map(showing, subscription_key=subscription_key)
                 repository.insert_snapshot(_snapshot_from_result(showing, parsed))
             except Exception as error:
                 failed += 1
@@ -615,6 +631,12 @@ def _unknown_result(message: str) -> SeatParseResult:
         confidence="low",
         error_message=message,
     )
+
+
+def _within_probe_window(showing: CineplexShowing, probe_until: date | None) -> bool:
+    if probe_until is None:
+        return True
+    return showing.starts_at.astimezone(REGINA_TZ).date() <= probe_until
 
 
 def _can_probe_seats(showing: CineplexShowing) -> bool:
