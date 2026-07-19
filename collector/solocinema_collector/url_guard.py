@@ -10,6 +10,8 @@ ALLOWED_FETCH_DOMAINS = (
     "atomtickets.com",
     "cineplex.com",
     "landmarkcinemas.com",
+    "sasksciencecentre.com",
+    "ticketclick.com",
 )
 
 

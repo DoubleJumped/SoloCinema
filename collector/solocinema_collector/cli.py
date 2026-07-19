@@ -109,6 +109,28 @@ def main(argv: list[str] | None = None) -> int:
         help="Write discovered showings with unknown snapshots without opening seat maps.",
     )
 
+    discover_imax = subparsers.add_parser("discover-imax")
+    discover_imax.add_argument("--max-showings", type=int)
+
+    probe_imax = subparsers.add_parser("probe-imax-seatmap")
+    probe_imax.add_argument("--sch", required=True, help="ATMS schedule id")
+    probe_imax.add_argument("--api-key", help="seats-api.ticketclick.com org key")
+
+    run_imax = subparsers.add_parser("run-imax")
+    run_imax.add_argument("--database-url", default=DEFAULT_DATABASE_URL)
+    run_imax.add_argument("--max-showings", type=int)
+    run_imax.add_argument(
+        "--probe-days",
+        type=int,
+        default=2,
+        help="Open seat maps only for showings within the first N days.",
+    )
+    run_imax.add_argument(
+        "--skip-seat-probe",
+        action="store_true",
+        help="Write discovered showings with calendar-based snapshots only.",
+    )
+
     run_all = subparsers.add_parser("run-all")
     run_all.add_argument("--database-url", default=DEFAULT_DATABASE_URL)
     run_all.add_argument("--wait-ms", type=int, default=5000)
@@ -254,10 +276,39 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(summary_to_json(summary))
         return 0
+    if args.command == "discover-imax":
+        from .imax import discover_imax_showings, showings_to_json
+
+        showings = discover_imax_showings()
+        if args.max_showings is not None:
+            showings = showings[: args.max_showings]
+        print(showings_to_json(showings))
+        return 0
+    if args.command == "probe-imax-seatmap":
+        from .imax import probe_imax_seat_map
+
+        result = probe_imax_seat_map(args.sch, api_key=args.api_key)
+        if result is None:
+            print(json.dumps({"seat_map": None, "note": "general admission (no chart)"}))
+            return 0
+        print(result.model_dump_json(indent=2))
+        return 0
+    if args.command == "run-imax":
+        from .imax import run_imax_collection, summary_to_json
+
+        summary = run_imax_collection(
+            database_url=args.database_url,
+            max_showings=args.max_showings,
+            probe_seats=not args.skip_seat_probe,
+            probe_days=args.probe_days,
+        )
+        print(summary_to_json(summary))
+        return 0
     if args.command == "run-all":
         from dataclasses import asdict
 
         from .cineplex import run_cineplex_collection
+        from .imax import run_imax_collection
         from .landmark import run_landmark_collection
 
         # One chain failing must not stop the other from collecting.
@@ -284,6 +335,15 @@ def main(argv: list[str] | None = None) -> int:
             output["cineplex"] = asdict(cineplex_summary)
         except Exception as error:
             errors["cineplex"] = f"{type(error).__name__}: {error}"
+        try:
+            imax_summary = run_imax_collection(
+                database_url=args.database_url,
+                max_showings=args.max_showings_per_chain,
+                probe_seats=not args.skip_seat_probe,
+            )
+            output["imax"] = asdict(imax_summary)
+        except Exception as error:
+            errors["imax"] = f"{type(error).__name__}: {error}"
         # Trim snapshot history for finished showings, keeping each showing's
         # final seat counts (see prune_seat_snapshots in supabase/schema.sql).
         try:

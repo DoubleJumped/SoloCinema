@@ -74,6 +74,11 @@ function normalizeChain(
   if (/normanview/i.test(theaterName)) {
     return "Galaxy";
   }
+  // The Kramer IMAX is stored under the generic "Other" chain; surface it as
+  // its own chain by theatre name, same as the Galaxy.
+  if (/imax/i.test(theaterName)) {
+    return "IMAX";
+  }
   if (chain === "Landmark") {
     return "Landmark";
   }

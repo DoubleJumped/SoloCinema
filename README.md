@@ -28,6 +28,10 @@ Seat data comes from two sources:
   twice.
 - **Cineplex** — the same public showtimes and seat-layout/availability APIs
   the Cineplex website uses, in read-only preview mode.
+- **Kramer IMAX** — the Saskatchewan Science Centre's Vantix ATMS ticketing
+  site publishes per-showtime remaining counts, and reserved-seating shows
+  expose a per-seat SVG chart. See `docs/imax-research.md` for the full
+  reverse-engineering notes.
 
 Occupancy is *inferred* from public reserved-seating maps, not official sales
 data, and the UI labels it that way (`4 inferred`, `unknown`) alongside a
@@ -61,10 +65,12 @@ Useful commands — discovery and probes never write anywhere:
 # discover current showtimes
 python -m collector.solocinema_collector.cli discover-landmark-atom
 python -m collector.solocinema_collector.cli discover-cineplex
+python -m collector.solocinema_collector.cli discover-imax
 
 # probe a single seat map
 python -m collector.solocinema_collector.cli probe-cineplex-seatmap \
   --location-id 4108 --vista-session-id <session-id>
+python -m collector.solocinema_collector.cli probe-imax-seatmap --sch <schedule-id>
 
 # full collection run into local SQLite
 python -m collector.solocinema_collector.cli run-all \
@@ -81,6 +87,7 @@ Copy `.env.example` to `.env.local` for the app, or `.env` for the collector.
 | `SUPABASE_ANON_KEY` | app | read-only browser key |
 | `SUPABASE_SERVICE_ROLE_KEY` | collector | write access — Render only, never the browser |
 | `CINEPLEX_SUBSCRIPTION_KEY` | collector | Cineplex's public web-client API key |
+| `IMAX_SEATS_API_KEY` | collector | optional override; normally self-discovered from the public ticketing page |
 | `DATABASE_URL` | collector | e.g. `sqlite:///tmp/solocinema.sqlite` for local runs |
 
 ## Deployment

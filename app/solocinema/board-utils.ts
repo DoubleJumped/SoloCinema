@@ -6,7 +6,8 @@ const THEATER_CODES: Record<string, string> = {
   "Cineplex Cinemas Normanview": "NORMANVIEW",
   "Cineplex Cinemas Southland": "SOUTHLAND",
   "Cineplex Odeon Southland Mall": "SOUTHLAND",
-  "Rainbow Cinemas Golden Mile": "GOLDEN MILE"
+  "Rainbow Cinemas Golden Mile": "GOLDEN MILE",
+  "Kramer IMAX Theatre": "KRAMER IMAX"
 };
 
 const CODE_WIDTH = 13;

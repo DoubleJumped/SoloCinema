@@ -176,9 +176,10 @@ test("chains filter parses, applies, and round-trips", () => {
   );
   // full set and garbage both mean "all chains"
   assert.equal(
-    parseScreeningFilters({ chains: "Landmark,Cineplex,Galaxy" }).chains,
+    parseScreeningFilters({ chains: "Landmark,Cineplex,Galaxy,IMAX" }).chains,
     null
   );
+  assert.deepEqual(parseScreeningFilters({ chains: "IMAX" }).chains, ["IMAX"]);
   assert.equal(parseScreeningFilters({ chains: "IMAX Corp" }).chains, null);
   assert.deepEqual(parseScreeningFilters({ chains: "none" }).chains, []);
 

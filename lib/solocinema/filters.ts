@@ -12,7 +12,12 @@ export type TimeOfDay = (typeof TIME_OF_DAY_OPTIONS)[number]["value"];
 
 export type ChainName = ScreeningView["chain"];
 
-export const ALL_CHAINS: readonly ChainName[] = ["Landmark", "Cineplex", "Galaxy"];
+export const ALL_CHAINS: readonly ChainName[] = [
+  "Landmark",
+  "Cineplex",
+  "Galaxy",
+  "IMAX"
+];
 
 export type ScreeningFilters = {
   movie: string | null;

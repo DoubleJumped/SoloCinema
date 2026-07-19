@@ -1,0 +1,11 @@
+<svg id="SeatingChart" show-seats-always width="900" height="700" xmlns="http://www.w3.org/2000/svg">
+  <g board="">
+    <g seating-area="Main" zoom-target="Main">
+      <circle seat-id="33703" section-id="1274" seat="1" row="A" section="Main"       r="7.0000" data-bs-toggle="popover" />
+      <circle seat-id="33704" section-id="1274" seat="2" row="A" section="Main" locked      r="7.0000" data-bs-toggle="popover" />
+      <circle seat-id="33705" section-id="1274" seat="3" row="A" section="Main" locked      r="7.0000" data-bs-toggle="popover" />
+      <circle seat-id="33846" section-id="1274" seat="1" row="G (Accessible)" section="Main" message="This wheelchair space may be locked for an accompanying guest."  handicap stall  r="7.0000" data-bs-toggle="popover" />
+      <circle seat-id="33847" section-id="1274" seat="2" row="G (Accessible)" section="Main" locked message="You have chosen a wheelchair space – this location does not contain a physical seat."  handicap stall  r="7.0000" data-bs-toggle="popover" />
+    </g>
+  </g>
+</svg>

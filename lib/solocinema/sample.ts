@@ -47,6 +47,36 @@ export const sampleScreenings: ScreeningView[] = [
     lastCheckedAt: "2026-06-03T23:45:00.000Z"
   },
   {
+    id: "kramer-imax-1",
+    movieTitle: "The Odyssey: The IMAX 70mm Experience",
+    theaterName: "Kramer IMAX Theatre",
+    chain: "IMAX",
+    startsAt: "2026-06-04T04:00:00.000Z",
+    format: "IMAX",
+    ticketUrl: "https://tickets.sasksciencecentre.com/Selection.aspx?sch=198014",
+    inferredOccupied: 137,
+    availableSeats: 17,
+    totalSellableSeats: 154,
+    seatStatus: "available",
+    confidence: "medium",
+    lastCheckedAt: "2026-06-03T23:50:00.000Z"
+  },
+  {
+    id: "kramer-imax-2",
+    movieTitle: "Call of the Dolphins 3D",
+    theaterName: "Kramer IMAX Theatre",
+    chain: "IMAX",
+    startsAt: "2026-06-04T17:45:00.000Z",
+    format: "IMAX",
+    ticketUrl: "https://tickets.sasksciencecentre.com/Selection.aspx?sch=204086",
+    inferredOccupied: 4,
+    availableSeats: 150,
+    totalSellableSeats: 154,
+    seatStatus: "available",
+    confidence: "low",
+    lastCheckedAt: "2026-06-03T23:50:00.000Z"
+  },
+  {
     id: "cineplex-southland-1",
     movieTitle: "Static Matinee",
     theaterName: "Cineplex Odeon Southland Mall",

@@ -6,7 +6,7 @@ export type ScreeningView = {
   id: string;
   movieTitle: string;
   theaterName: string;
-  chain: "Landmark" | "Cineplex" | "Galaxy";
+  chain: "Landmark" | "Cineplex" | "Galaxy" | "IMAX";
   startsAt: string;
   format: string | null;
   ticketUrl: string;
