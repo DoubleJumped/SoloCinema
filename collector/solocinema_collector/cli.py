@@ -109,6 +109,21 @@ def main(argv: list[str] | None = None) -> int:
         help="Write discovered showings with unknown snapshots without opening seat maps.",
     )
 
+    refresh_key = subparsers.add_parser(
+        "refresh-cineplex-key",
+        help="Check the Cineplex key and rotate to the site's current key if it is dead.",
+    )
+    refresh_key.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report what would happen without updating the Render env var.",
+    )
+    refresh_key.add_argument(
+        "--force",
+        action="store_true",
+        help="Fetch and compare the site key even when the current key is still valid.",
+    )
+
     run_all = subparsers.add_parser("run-all")
     run_all.add_argument("--database-url", default=DEFAULT_DATABASE_URL)
     run_all.add_argument("--wait-ms", type=int, default=5000)
@@ -243,11 +258,25 @@ def main(argv: list[str] | None = None) -> int:
             parser.exit(1, f"error: {error}\n")
         print(summary_to_json(summary))
         return 0
-    if args.command == "run-cineplex":
-        from .cineplex import run_cineplex_collection, summary_to_json
+    if args.command == "refresh-cineplex-key":
+        from .cineplex import CINEPLEX_SUBSCRIPTION_KEY
+        from .key_refresh import refresh_cineplex_key
 
+        result = refresh_cineplex_key(
+            CINEPLEX_SUBSCRIPTION_KEY, dry_run=args.dry_run, force=args.force
+        )
+        print(result.to_json())
+        return 0 if (result.current_key_valid or result.rotated or args.dry_run) else 1
+    if args.command == "run-cineplex":
+        from .cineplex import CINEPLEX_SUBSCRIPTION_KEY, run_cineplex_collection, summary_to_json
+        from .key_refresh import ensure_valid_cineplex_key
+
+        subscription_key, refresh = ensure_valid_cineplex_key(CINEPLEX_SUBSCRIPTION_KEY)
+        if refresh is not None:
+            print(refresh.to_json())
         summary = run_cineplex_collection(
             database_url=args.database_url,
+            subscription_key=subscription_key,
             location_ids=args.location_ids,
             max_showings=args.max_showings,
             probe_seats=not args.skip_seat_probe,
@@ -257,12 +286,20 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "run-all":
         from dataclasses import asdict
 
-        from .cineplex import run_cineplex_collection
+        from .cineplex import CINEPLEX_SUBSCRIPTION_KEY, run_cineplex_collection
+        from .key_refresh import ensure_valid_cineplex_key
         from .landmark import run_landmark_collection
 
         # One chain failing must not stop the other from collecting.
         output: dict[str, Any] = {}
         errors: dict[str, str] = {}
+        cineplex_key = CINEPLEX_SUBSCRIPTION_KEY
+        try:
+            cineplex_key, refresh = ensure_valid_cineplex_key(CINEPLEX_SUBSCRIPTION_KEY)
+            if refresh is not None:
+                output["cineplex_key_refresh"] = json.loads(refresh.to_json())
+        except Exception as error:
+            errors["cineplex_key_refresh"] = f"{type(error).__name__}: {error}"
         try:
             landmark_summary = run_landmark_collection(
                 database_url=args.database_url,
@@ -280,6 +317,7 @@ def main(argv: list[str] | None = None) -> int:
                 database_url=args.database_url,
                 max_showings=args.max_showings_per_chain,
                 probe_seats=not args.skip_seat_probe,
+                subscription_key=cineplex_key,
             )
             output["cineplex"] = asdict(cineplex_summary)
         except Exception as error:

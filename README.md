@@ -81,7 +81,22 @@ Copy `.env.example` to `.env.local` for the app, or `.env` for the collector.
 | `SUPABASE_ANON_KEY` | app | read-only browser key |
 | `SUPABASE_SERVICE_ROLE_KEY` | collector | write access — Render only, never the browser |
 | `CINEPLEX_SUBSCRIPTION_KEY` | collector | Cineplex's public web-client API key |
+| `RENDER_API_KEY` | collector | optional — lets a rotated Cineplex key be written back to the Render env var |
+| `RENDER_SERVICE_ID` | collector | Render injects this automatically on its services; only set locally for testing |
 | `DATABASE_URL` | collector | e.g. `sqlite:///tmp/solocinema.sqlite` for local runs |
+
+### Cineplex key rotation
+
+Cineplex periodically rotates the public key its own site ships, which turns
+every collector request into a 401. Runs now check the key first and, if it is
+dead, re-extract the current key from the cineplex.com JS bundles, validate it
+against the live showtimes endpoint, and continue with it. With
+`RENDER_API_KEY` set, the fresh key is also PUT back to the service's
+`CINEPLEX_SUBSCRIPTION_KEY` env var so later runs start healthy. Manual check:
+
+```bash
+python -m collector.solocinema_collector.cli refresh-cineplex-key --dry-run
+```
 
 ## Deployment
 
