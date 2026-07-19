@@ -27,6 +27,29 @@ export function theaterCode(name: string) {
   return stripped.slice(0, CODE_WIDTH).replace(/\s+\S*$/, "");
 }
 
+const CINEPLEX_THEATRE_PAGES: Record<string, string> = {
+  "Cineplex Cinemas Normanview":
+    "https://www.cineplex.com/theatre/cineplex-cinemas-normanview",
+  "Cineplex Cinemas Southland":
+    "https://www.cineplex.com/theatre/cineplex-cinemas-southland",
+  "Cineplex Odeon Southland Mall":
+    "https://www.cineplex.com/theatre/cineplex-cinemas-southland"
+};
+
+export function effectiveTicketUrl(
+  screening: ScreeningView,
+  now: Date = new Date()
+): string {
+  // Cineplex refuses to open ticketing for a show that has already started
+  // (the page dies with "User session token not set"), so once a showing
+  // begins, send Cineplex clicks to the theatre page instead.
+  const theatrePage = CINEPLEX_THEATRE_PAGES[screening.theaterName];
+  if (theatrePage && new Date(screening.startsAt) <= now) {
+    return theatrePage;
+  }
+  return screening.ticketUrl;
+}
+
 export function isSafeTicketUrl(url: string): boolean {
   try {
     const { protocol } = new URL(url);
@@ -92,7 +115,7 @@ export function toBoardRow(screening: ScreeningView): BoardRow {
     theatre: theaterCode(screening.theaterName),
     seats: seatsLabel(screening),
     tier,
-    ticketUrl: screening.ticketUrl,
+    ticketUrl: effectiveTicketUrl(screening),
     aria: `${screening.movieTitle} at ${screening.theaterName}, ${date} ${time}, ${TIER_LABELS[tier]}. Opens the theatre's ticket page.`
   };
 }

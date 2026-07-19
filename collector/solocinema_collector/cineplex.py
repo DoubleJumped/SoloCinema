@@ -107,16 +107,6 @@ ONLINE_KEYS = {
     "isavailableforpurchase",
     "is_available_for_purchase",
 }
-URL_KEYS = {
-    "ticketingurl",
-    "ticketing_url",
-    "ticketingredesignurl",
-    "ticketing_redesign_url",
-    "deeplinkurl",
-    "deeplink_url",
-    "seatmapurl",
-    "seat_map_url",
-}
 RESERVED_KEYS = {
     "isreservedseating",
     "is_reserved_seating",
@@ -391,7 +381,10 @@ def _walk_showtimes(
                     CineplexShowing(
                         movie_title=movie_title,
                         starts_at=starts_at,
-                        ticket_url=_first_text(value, URL_KEYS) or _ticket_url(location_id, vista_session_id),
+                        # The API's own URL fields (ticketingUrl, deeplinkUrl, ...) are
+                        # mobile-app deep links that fail in a browser with "User
+                        # session token not set" — always build the public web URL.
+                        ticket_url=_ticket_url(location_id, vista_session_id),
                         source_id=f"{theater_external_id}-cineplex-{vista_session_id}",
                         vista_session_id=vista_session_id,
                         location_id=location_id,
@@ -694,7 +687,10 @@ def _seat_availability_url(location_id: str, vista_session_id: str) -> str:
 
 
 def _ticket_url(location_id: str, vista_session_id: str) -> str:
-    return f"https://www.cineplex.com/ticketing/{location_id}/{vista_session_id}"
+    return (
+        "https://www.cineplex.com/ticketing/preview"
+        f"?theatreId={location_id}&showtimeId={vista_session_id}"
+    )
 
 
 def _first_text(value: dict[str, Any], keys: set[str]) -> str | None:
