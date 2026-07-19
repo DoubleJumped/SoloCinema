@@ -19,7 +19,7 @@
   --c-date: calc(6 * var(--cell));
   --c-film: calc(24 * var(--cell));
   --c-theatre: calc(13 * var(--cell));
-  --c-seats: calc(6 * var(--cell));
+  --c-seats: calc(7 * var(--cell));
   --col-gap: clamp(8px, 1vw, 16px);
 }
 

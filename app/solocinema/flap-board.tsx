@@ -6,7 +6,8 @@ import { isSafeTicketUrl, type BoardRow } from "./board-utils";
 
 const CHARSET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/:&+- ";
 const LOGO = "SOLOCINEMA";
-const COLS = { time: 5, date: 6, film: 24, theatre: 13, seats: 6 } as const;
+// seats needs 7 tiles for a full house at the 154-seat IMAX ("154/154")
+const COLS = { time: 5, date: 6, film: 24, theatre: 13, seats: 7 } as const;
 const FLIP_STEP_MS = 105;
 const REFLIP_EVERY_MS = 17000;
 // Server-render only the first screenful of rows; the rest stream in as the
