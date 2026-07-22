@@ -60,6 +60,26 @@ with system cron is the strongest genuinely-$0 alternative (real cron,
 Supabase pg_cron + Edge Functions is $0 and elegant but requires rewriting
 the collector in TypeScript/Deno — not worth it.
 
+## Status (2026-07-22, same day)
+
+Steps 1, 2, and most of 4 shipped:
+
+- Efficiency fixes landed in `collector/` (commit "Cut collector Supabase
+  traffic ~10x"): keep-alive connection + id caches in SupabaseRepository,
+  snapshots only for probed showings, Cineplex capped at 7 days, prune
+  hourly and non-fatal. First real run: Cineplex discovery dropped 851 →
+  523, all sources success.
+- `.github/workflows/collect.yml` is live with the three secrets set; the
+  first `workflow_dispatch` run succeeded in ~7.5 min.
+- Remaining manual step: the Supabase `prune_seat_snapshots` RPC still 500s
+  (statement timeout against the bloated backlog). Run
+  `select public.prune_seat_snapshots('6 hours');` in the Supabase SQL
+  editor (may take a few attempts or a temporary
+  `set statement_timeout = '120s';` in the same session) to clear the
+  backlog once; after that the hourly prune should stay ahead of it.
+- Render cron is still enabled in parallel; suspend it and delete
+  `render.yaml` after a day of clean Actions runs.
+
 ## Suggested order of work
 
 1. Ship efficiency fixes 1–4 from the audit (one focused PR-sized change,
