@@ -1,0 +1,35 @@
+name: collect
+
+on:
+  schedule:
+    # Every 15 min, 10:07am-11:52pm Regina time (UTC-6, no DST). Minutes are
+    # offset from :00/:15/:30/:45 because GitHub delays or drops scheduled
+    # runs during the top-of-hour rush.
+    - cron: "7,22,37,52 16-23,0-5 * * *"
+  workflow_dispatch:
+
+# A delayed run can pile onto the next slot's run; queue them instead of
+# collecting concurrently.
+concurrency:
+  group: collect
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      # Deliberately not ".[collector]": without Playwright installed the
+      # Landmark source uses its Atom Tickets HTTP path, same as it did on
+      # Render (see research/collector-efficiency-audit.md).
+      - run: pip install -e .
+      - run: python -m collector.solocinema_collector.cli run-all --database-url supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          CINEPLEX_SUBSCRIPTION_KEY: ${{ secrets.CINEPLEX_SUBSCRIPTION_KEY }}
