@@ -103,7 +103,10 @@ class CineplexCollectorTests(unittest.TestCase):
         self.assertEqual(showing.vista_session_id, "264346")
         self.assertEqual(showing.format, "Recliner")
         self.assertEqual(showing.auditorium, "Aud 2")
-        self.assertTrue(showing.ticket_url.startswith("https://apis.cineplex.com/prod/ticketing"))
+        self.assertEqual(
+            showing.ticket_url,
+            "https://www.cineplex.com/ticketing/preview?theatreId=4108&showtimeId=264346",
+        )
         self.assertTrue(showing.is_online_ticketing_enabled)
         self.assertTrue(showing.is_reserved_seating)
 
@@ -250,9 +253,61 @@ class CineplexCollectorTests(unittest.TestCase):
                     probe_until=date(2026, 7, 6),
                 )
 
+            with repository.connect() as connection:
+                snapshot_count = connection.execute(
+                    "select count(*) as n from seat_snapshots"
+                ).fetchone()["n"]
+                showing_count = connection.execute(
+                    "select count(*) as n from showings"
+                ).fetchone()["n"]
+
         self.assertEqual(summary.status, "success")
         self.assertEqual(summary.checked, 2)
         self.assertEqual(probed, ["cineplex-southland-cineplex-near"])
+        # both showings are written, but only the probed one gets a snapshot
+        self.assertEqual(showing_count, 2)
+        self.assertEqual(snapshot_count, 1)
+
+    def test_write_cineplex_showings_skips_probe_for_started_showings(self) -> None:
+        started = CineplexShowing(
+            movie_title="Started Show",
+            starts_at=datetime(2026, 7, 6, 1, 15, tzinfo=UTC),
+            ticket_url="https://www.cineplex.com/ticketing/4108/started",
+            source_id="cineplex-southland-cineplex-started",
+            vista_session_id="started",
+            location_id="4108",
+            theater_external_id="cineplex-southland",
+            is_online_ticketing_enabled=True,
+            is_reserved_seating=True,
+        )
+        probed: list[str] = []
+
+        def fake_probe(showing: CineplexShowing, subscription_key=None):
+            probed.append(showing.source_id)
+            from collector.solocinema_collector.cineplex import _unknown_result
+
+            return _unknown_result("probed")
+
+        with tempfile.TemporaryDirectory() as directory:
+            database_url = f"sqlite:///{Path(directory) / 'solocinema.sqlite'}"
+            repository = SQLiteRepository(database_url)
+            repository.init_schema()
+            with patch(
+                "collector.solocinema_collector.cineplex.probe_cineplex_seat_map",
+                side_effect=fake_probe,
+            ):
+                summary = write_cineplex_showings(
+                    repository,
+                    [started],
+                    database_url=database_url,
+                    probe_seats=True,
+                    probe_until=date(2026, 7, 6),
+                    # showing began more than three hours before this cutoff
+                    probe_after=datetime(2026, 7, 6, 4, 30, tzinfo=UTC),
+                )
+
+        self.assertEqual(summary.status, "success")
+        self.assertEqual(probed, [])
 
 
 if __name__ == "__main__":

@@ -339,6 +339,7 @@ def main(argv: list[str] | None = None) -> int:
                 max_showings=args.max_showings_per_chain,
                 probe_seats=not args.skip_seat_probe,
                 probe_days=args.probe_days,
+                days_ahead=args.days_ahead,
             )
             output["cineplex"] = asdict(cineplex_summary)
         except Exception as error:
@@ -355,16 +356,19 @@ def main(argv: list[str] | None = None) -> int:
             errors["imax"] = f"{type(error).__name__}: {error}"
         # Trim snapshot history for finished showings, keeping each showing's
         # final seat counts (see prune_seat_snapshots in supabase/schema.sql).
-        try:
-            output["pruned_snapshots"] = repository_from_url(
-                args.database_url
-            ).prune_snapshots()
-        except Exception as error:
-            errors["prune"] = f"{type(error).__name__}: {error}"
+        # Pruning scans the whole snapshot table, so once an hour is plenty;
+        # a prune failure is reported but doesn't fail the run.
+        if datetime.now(UTC).minute < 15:
+            try:
+                output["pruned_snapshots"] = repository_from_url(
+                    args.database_url
+                ).prune_snapshots()
+            except Exception as error:
+                errors["prune"] = f"{type(error).__name__}: {error}"
         if errors:
             output["errors"] = errors
         print(json.dumps(output, indent=2))
-        return 1 if errors else 0
+        return 1 if any(chain != "prune" for chain in errors) else 0
     raise AssertionError(f"Unhandled command {args.command}")
 
 

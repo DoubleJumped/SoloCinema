@@ -31,6 +31,9 @@ LANDMARK_REGINA_EXTERNAL_ID = "landmark-regina"
 # per-run load on the theatre sites.
 DEFAULT_DAYS_AHEAD = 7
 DEFAULT_PROBE_DAYS = 3
+# Stop probing once a showing has been underway this long; the last snapshot
+# before this point is the final attendance figure.
+PROBE_GRACE = timedelta(hours=3)
 REGINA_TZ = ZoneInfo("America/Regina")
 LANDMARK_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 "
@@ -244,6 +247,7 @@ def run_landmark_collection(
         database_url=database_url,
         probe_seats=probe_seats and probe_days > 0,
         probe_until=probe_until,
+        probe_after=datetime.now(UTC) - PROBE_GRACE,
     )
 
 
@@ -253,6 +257,7 @@ def write_landmark_showings(
     database_url: str,
     probe_seats: bool = True,
     probe_until: date | None = None,
+    probe_after: datetime | None = None,
 ) -> LandmarkCollectionSummary:
     run_id = repository.start_run(ScrapeRun(chain="Landmark"))
     checked = 0
@@ -280,14 +285,11 @@ def write_landmark_showings(
                         source_id=showing.source_id,
                     )
                 )
-                parsed = _unknown_result("Seat probe skipped")
-                if probe_seats and _within_probe_window(showing, probe_until):
+                # Showings we didn't probe get no snapshot row at all; the
+                # screenings view reads missing snapshots as status "unknown".
+                if probe_seats and _within_probe_window(showing, probe_until, probe_after):
                     parsed = _probe_showing_seats(showing)
-                elif probe_seats:
-                    parsed = _unknown_result(
-                        f"Seat probe deferred (showing is after {probe_until})"
-                    )
-                repository.insert_snapshot(_snapshot_from_result(showing, parsed))
+                    repository.insert_snapshot(_snapshot_from_result(showing, parsed))
             except Exception as error:
                 failed += 1
                 _insert_failed_snapshot(repository, showing, error)
@@ -701,7 +703,13 @@ def _source_id(
     return f"landmark-regina-{normalize_movie_title(movie_title)}-{starts_at:%Y%m%d%H%M}-{digest}"
 
 
-def _within_probe_window(showing: LandmarkShowing, probe_until: date | None) -> bool:
+def _within_probe_window(
+    showing: LandmarkShowing,
+    probe_until: date | None,
+    probe_after: datetime | None = None,
+) -> bool:
+    if probe_after is not None and _as_utc(showing.starts_at) < probe_after:
+        return False
     if probe_until is None:
         return True
     return _as_utc(showing.starts_at).astimezone(REGINA_TZ).date() <= probe_until

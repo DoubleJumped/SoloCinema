@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import http.client
+import io
 import json
 import os
 import sqlite3
+import urllib.error
 import urllib.parse
 import urllib.request
 from contextlib import contextmanager
@@ -273,8 +276,8 @@ class SQLiteRepository:
                       t.name as theater_name,
                       s.starts_at,
                       latest.inferred_occupied,
-                      latest.raw_status,
-                      latest.confidence
+                      coalesce(latest.raw_status, 'unknown') as raw_status,
+                      coalesce(latest.confidence, 'low') as confidence
                     from showings s
                     join movies m on m.id = s.movie_id
                     join theaters t on t.id = s.theater_id
@@ -333,54 +336,79 @@ class SupabaseRepository:
     def __init__(self, supabase_url: str, service_role_key: str) -> None:
         self.base_url = supabase_url.rstrip("/")
         self.service_role_key = service_role_key
+        split = urllib.parse.urlsplit(self.base_url)
+        self._host = split.netloc
+        self._path_prefix = split.path.rstrip("/")
+        self._connection: http.client.HTTPSConnection | None = None
+        # Per-run id caches. Rows only ever gain ids; caching them for the
+        # lifetime of one collection run avoids the lookup GET that would
+        # otherwise follow every upsert.
+        self._theater_ids: dict[str, str] = {}
+        self._movie_ids: dict[str, str] = {}
+        self._showing_ids: dict[str, str] = {}
+        self._upserted_payloads: dict[tuple[str, str], str] = {}
 
     def init_schema(self) -> None:
         # Supabase schema is applied with supabase/schema.sql; PostgREST cannot run DDL.
         return None
 
     def upsert_theater(self, theater: Theater) -> str:
+        payload = {
+            "chain": theater.chain,
+            "name": theater.name,
+            "city": theater.city,
+            "external_id": theater.external_id,
+            "ticketing_url": str(theater.ticketing_url),
+        }
+        cached = self._cached_upsert("theaters", theater.external_id, payload)
+        if cached is not None:
+            return cached
         rows = self._request(
             "POST",
             "theaters",
-            query={"on_conflict": "external_id"},
-            payload={
-                "chain": theater.chain,
-                "name": theater.name,
-                "city": theater.city,
-                "external_id": theater.external_id,
-                "ticketing_url": str(theater.ticketing_url),
-            },
+            query={"on_conflict": "external_id", "select": "id"},
+            payload=payload,
             prefer="resolution=merge-duplicates,return=representation",
         )
-        return rows[0]["id"]
+        return self._remember(
+            "theaters", theater.external_id, payload, rows[0]["id"], self._theater_ids
+        )
 
     def upsert_movie(self, movie: Movie) -> str:
+        payload = {
+            "normalized_title": movie.normalized_title,
+            "source_title": movie.source_title,
+            "poster_url": str(movie.poster_url) if movie.poster_url else None,
+            "rating": movie.rating,
+            "runtime_minutes": movie.runtime_minutes,
+        }
+        cached = self._cached_upsert("movies", movie.normalized_title, payload)
+        if cached is not None:
+            return cached
         rows = self._request(
             "POST",
             "movies",
-            query={"on_conflict": "normalized_title"},
-            payload={
-                "normalized_title": movie.normalized_title,
-                "source_title": movie.source_title,
-                "poster_url": str(movie.poster_url) if movie.poster_url else None,
-                "rating": movie.rating,
-                "runtime_minutes": movie.runtime_minutes,
-            },
+            query={"on_conflict": "normalized_title", "select": "id"},
+            payload=payload,
             prefer="resolution=merge-duplicates,return=representation",
         )
-        return rows[0]["id"]
+        return self._remember(
+            "movies", movie.normalized_title, payload, rows[0]["id"], self._movie_ids
+        )
 
     def upsert_showing(self, showing: Showing) -> str:
-        theater_id = self._lookup_id(
-            "theaters", "external_id", showing.theater_external_id
-        )
-        movie_id = self._lookup_id(
+        theater_id = self._theater_ids.get(
+            showing.theater_external_id
+        ) or self._lookup_id("theaters", "external_id", showing.theater_external_id)
+        movie_id = self._movie_ids.get(
+            showing.movie_normalized_title
+        ) or self._lookup_id(
             "movies", "normalized_title", showing.movie_normalized_title
         )
         rows = self._request(
             "POST",
             "showings",
-            query={"on_conflict": "source_id"},
+            query={"on_conflict": "source_id", "select": "id"},
             payload={
                 "theater_id": theater_id,
                 "movie_id": movie_id,
@@ -392,13 +420,14 @@ class SupabaseRepository:
             },
             prefer="resolution=merge-duplicates,return=representation",
         )
+        self._showing_ids[showing.source_id] = rows[0]["id"]
         return rows[0]["id"]
 
     def insert_snapshot(self, snapshot: SeatSnapshot) -> str:
-        showing_id = self._lookup_id(
-            "showings", "source_id", snapshot.showing_source_id
-        )
-        rows = self._request(
+        showing_id = self._showing_ids.get(
+            snapshot.showing_source_id
+        ) or self._lookup_id("showings", "source_id", snapshot.showing_source_id)
+        self._request(
             "POST",
             "seat_snapshots",
             payload={
@@ -411,14 +440,15 @@ class SupabaseRepository:
                 "confidence": snapshot.confidence,
                 "error_message": snapshot.error_message,
             },
-            prefer="return=representation",
+            prefer="return=minimal",
         )
-        return rows[0]["id"]
+        return showing_id
 
     def start_run(self, run: ScrapeRun) -> str:
         rows = self._request(
             "POST",
             "scrape_runs",
+            query={"select": "id"},
             payload={
                 "chain": run.chain,
                 "started_at": run.started_at.isoformat(),
@@ -468,6 +498,30 @@ class SupabaseRepository:
             raise LookupError(f"Could not find {table}.{column}={value}")
         return rows[0]["id"]
 
+    def _cached_upsert(
+        self, table: str, key: str, payload: dict[str, Any]
+    ) -> str | None:
+        # Skip the network round-trip when this run already upserted an
+        # identical row (the same movie appears once per showtime).
+        if self._upserted_payloads.get((table, key)) != json.dumps(
+            payload, sort_keys=True
+        ):
+            return None
+        cache = self._theater_ids if table == "theaters" else self._movie_ids
+        return cache.get(key)
+
+    def _remember(
+        self,
+        table: str,
+        key: str,
+        payload: dict[str, Any],
+        row_id: str,
+        cache: dict[str, str],
+    ) -> str:
+        self._upserted_payloads[(table, key)] = json.dumps(payload, sort_keys=True)
+        cache[key] = row_id
+        return row_id
+
     def _request(
         self,
         method: str,
@@ -476,9 +530,9 @@ class SupabaseRepository:
         payload: dict[str, Any] | None = None,
         prefer: str | None = None,
     ) -> list[dict[str, Any]]:
-        url = f"{self.base_url}/rest/v1/{resource}"
+        path = f"{self._path_prefix}/rest/v1/{resource}"
         if query:
-            url = f"{url}?{urllib.parse.urlencode(query)}"
+            path = f"{path}?{urllib.parse.urlencode(query)}"
 
         body = json.dumps(payload).encode("utf-8") if payload is not None else None
         headers = {
@@ -491,13 +545,53 @@ class SupabaseRepository:
         if prefer:
             headers["Prefer"] = prefer
 
-        request = urllib.request.Request(url, data=body, headers=headers, method=method)
-        with urllib.request.urlopen(request, timeout=30) as response:
-            content = response.read()
+        # One TLS connection is reused across the whole run; a stale
+        # keep-alive socket (server closed between requests) is retried once
+        # on a fresh connection. Failures after the request is known to have
+        # reached the server are not retried, so writes are never duplicated.
+        for attempt in (1, 2):
+            connection = self._connection
+            if connection is None:
+                connection = http.client.HTTPSConnection(self._host, timeout=30)
+                self._connection = connection
+            try:
+                connection.request(method, path, body=body, headers=headers)
+                response = connection.getresponse()
+                status = response.status
+                reason = response.reason
+                content = response.read()
+            except (
+                http.client.RemoteDisconnected,
+                http.client.CannotSendRequest,
+                BrokenPipeError,
+                ConnectionResetError,
+            ):
+                self._close_connection()
+                if attempt == 2:
+                    raise
+                continue
+            except Exception:
+                self._close_connection()
+                raise
+            break
+
+        if status >= 400:
+            self._close_connection()
+            url = f"https://{self._host}{path}"
+            raise urllib.error.HTTPError(
+                url, status, reason, response.headers, io.BytesIO(content)
+            )
         if not content:
             return []
         parsed = json.loads(content)
         return parsed if isinstance(parsed, list) else [parsed]
+
+    def _close_connection(self) -> None:
+        if self._connection is not None:
+            try:
+                self._connection.close()
+            finally:
+                self._connection = None
 
 
 def _lookup_id(

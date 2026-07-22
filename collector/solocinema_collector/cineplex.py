@@ -27,6 +27,13 @@ REGINA_TZ = ZoneInfo("America/Regina")
 # (see docs/imax-research.md's probe-window analysis), so only open seat maps
 # for showings starting within this many Regina calendar days.
 DEFAULT_PROBE_DAYS = 3
+# The showtimes API returns weeks of schedule; only keep showings within this
+# many Regina calendar days so a run doesn't write hundreds of far-future rows
+# (matches Landmark's discovery horizon).
+DEFAULT_DAYS_AHEAD = 7
+# Stop probing once a showing has been underway this long; the last snapshot
+# before this point is the final attendance figure.
+PROBE_GRACE = timedelta(hours=3)
 
 CINEPLEX_REGINA_THEATERS = {
     "4108": Theater(
@@ -243,11 +250,19 @@ def run_cineplex_collection(
     max_showings: int | None = None,
     probe_seats: bool = True,
     probe_days: int = DEFAULT_PROBE_DAYS,
+    days_ahead: int = DEFAULT_DAYS_AHEAD,
     subscription_key: str | None = CINEPLEX_SUBSCRIPTION_KEY,
 ) -> CineplexCollectionSummary:
     showings: list[CineplexShowing] = []
     for location_id in location_ids or list(CINEPLEX_REGINA_THEATERS):
         showings.extend(discover_cineplex_showings(location_id, subscription_key=subscription_key))
+    if days_ahead > 0:
+        last_date = datetime.now(REGINA_TZ).date() + timedelta(days=days_ahead - 1)
+        showings = [
+            showing
+            for showing in showings
+            if showing.starts_at.astimezone(REGINA_TZ).date() <= last_date
+        ]
     if max_showings is not None:
         showings = showings[:max_showings]
 
@@ -264,6 +279,7 @@ def run_cineplex_collection(
         database_url=database_url,
         probe_seats=probe_seats and probe_days > 0,
         probe_until=probe_until,
+        probe_after=datetime.now(UTC) - PROBE_GRACE,
         subscription_key=subscription_key,
     )
 
@@ -274,6 +290,7 @@ def write_cineplex_showings(
     database_url: str,
     probe_seats: bool = True,
     probe_until: date | None = None,
+    probe_after: datetime | None = None,
     subscription_key: str | None = CINEPLEX_SUBSCRIPTION_KEY,
 ) -> CineplexCollectionSummary:
     run_id = repository.start_run(ScrapeRun(chain="Cineplex"))
@@ -303,16 +320,15 @@ def write_cineplex_showings(
                         source_id=showing.source_id,
                     )
                 )
-                parsed = _unknown_result("Seat probe skipped")
-                if probe_seats and not _can_probe_seats(showing):
-                    parsed = _unknown_result("Cineplex showing is not online reserved seating")
-                elif probe_seats and not _within_probe_window(showing, probe_until):
-                    parsed = _unknown_result(
-                        f"Seat probe deferred (showing is after {probe_until})"
-                    )
-                elif probe_seats:
+                # Showings we didn't probe get no snapshot row at all; the
+                # screenings view reads missing snapshots as status "unknown".
+                if (
+                    probe_seats
+                    and _can_probe_seats(showing)
+                    and _within_probe_window(showing, probe_until, probe_after)
+                ):
                     parsed = probe_cineplex_seat_map(showing, subscription_key=subscription_key)
-                repository.insert_snapshot(_snapshot_from_result(showing, parsed))
+                    repository.insert_snapshot(_snapshot_from_result(showing, parsed))
             except Exception as error:
                 failed += 1
                 _insert_failed_snapshot(repository, showing, error)
@@ -626,7 +642,13 @@ def _unknown_result(message: str) -> SeatParseResult:
     )
 
 
-def _within_probe_window(showing: CineplexShowing, probe_until: date | None) -> bool:
+def _within_probe_window(
+    showing: CineplexShowing,
+    probe_until: date | None,
+    probe_after: datetime | None = None,
+) -> bool:
+    if probe_after is not None and showing.starts_at < probe_after:
+        return False
     if probe_until is None:
         return True
     return showing.starts_at.astimezone(REGINA_TZ).date() <= probe_until

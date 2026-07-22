@@ -303,6 +303,10 @@ def write_imax_showings(
                         source_id=showing.source_id,
                     )
                 )
+                # Out-of-window showings get no snapshot row; the screenings
+                # view reads missing snapshots as status "unknown". Without
+                # probing (validation mode) every showing keeps its
+                # calendar-derived remaining-seats snapshot.
                 parsed = None
                 if probe_seats and _within_probe_window(showing, now, probe_days):
                     if api_key is None:
@@ -312,9 +316,12 @@ def write_imax_showings(
                             or DEFAULT_SEATS_API_KEY
                         )
                     parsed = probe_imax_seat_map(showing.schedule_id, api_key)
-                if parsed is None:
+                    if parsed is None:
+                        parsed = result_from_remaining(showing.remaining)
+                elif not probe_seats:
                     parsed = result_from_remaining(showing.remaining)
-                repository.insert_snapshot(_snapshot_from_result(showing, parsed))
+                if parsed is not None:
+                    repository.insert_snapshot(_snapshot_from_result(showing, parsed))
             except Exception as error:
                 failed += 1
                 _insert_failed_snapshot(repository, showing, error)
