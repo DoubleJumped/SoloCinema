@@ -71,14 +71,14 @@ Steps 1, 2, and most of 4 shipped:
   523, all sources success.
 - `.github/workflows/collect.yml` is live with the three secrets set; the
   first `workflow_dispatch` run succeeded in ~7.5 min.
-- Remaining manual step: the Supabase `prune_seat_snapshots` RPC still 500s
-  (statement timeout against the bloated backlog). Run
-  `select public.prune_seat_snapshots('6 hours');` in the Supabase SQL
-  editor (may take a few attempts or a temporary
-  `set statement_timeout = '120s';` in the same session) to clear the
-  backlog once; after that the hourly prune should stay ahead of it.
-- Render cron is still enabled in parallel; suspend it and delete
-  `render.yaml` after a day of clean Actions runs.
+- Snapshot backlog cleared: `select public.prune_seat_snapshots('6 hours');`
+  in the Supabase SQL editor deleted 29,637 rows (the editor session gets a
+  longer statement timeout than the PostgREST RPC path, which is why the
+  in-run prune had been 500ing).
+- Migration complete: the first schedule-triggered Actions run succeeded
+  (19:35 UTC — 13 min of scheduler jitter on the 19:22 slot, within normal
+  range). `render.yaml` is removed; the Render cron service is suspended
+  and can be deleted from the dashboard.
 
 ## Suggested order of work
 
