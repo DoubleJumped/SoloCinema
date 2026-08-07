@@ -110,6 +110,44 @@ class _FlakyOpener:
         return _FakeResponse()
 
 
+class _RecordingOpener:
+    def __init__(self, bodies: list[bytes]) -> None:
+        self.bodies = bodies
+        self.requests = []
+
+    def open(self, request, timeout=None):
+        self.requests.append(request)
+        body = self.bodies.pop(0)
+
+        class _Response:
+            headers = Message()
+
+            @staticmethod
+            def read() -> bytes:
+                return body
+
+        return _Response()
+
+
+class AtomCheckoutProbeTests(unittest.TestCase):
+    def test_seat_map_requests_send_xhr_header(self) -> None:
+        checkout_html = (
+            '<div data-context="{&quot;clientRequestId&quot;:&quot;req-1&quot;,'
+            '&quot;showtimeContext&quot;:{&quot;showtimeId&quot;:639521705,'
+            '&quot;areaCategories&quot;:[&quot;0000000001&quot;]}}"></div>'
+        )
+        opener = _RecordingOpener([checkout_html.encode(), b"<div></div>"])
+        with patch.object(atom, "_opener", return_value=opener), patch.object(atom.time, "sleep"):
+            atom.probe_atom_checkout_seat_map("https://www.atomtickets.com/checkout/639521705")
+
+        self.assertEqual(len(opener.requests), 2)
+        checkout_request, seat_map_request = opener.requests
+        self.assertIsNone(checkout_request.get_header("X-requested-with"))
+        self.assertIn("/checkout/639521705/seat-map?", seat_map_request.full_url)
+        self.assertIn("clientRequestId=req-1", seat_map_request.full_url)
+        self.assertEqual(seat_map_request.get_header("X-requested-with"), "XMLHttpRequest")
+
+
 class AtomOpenTextRetryTests(unittest.TestCase):
     def test_retries_on_429_and_recovers(self) -> None:
         opener = _FlakyOpener([_http_429(), _http_429()])

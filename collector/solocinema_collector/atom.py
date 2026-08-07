@@ -86,7 +86,11 @@ def probe_atom_checkout_seat_map(checkout_url: str) -> SeatParseResult:
         if showtime_context.get("eventId"):
             params["eventId"] = str(showtime_context["eventId"])
         seat_map_url = urljoin(checkout_url, f"/checkout/{showtime_id}/seat-map?{urlencode(params)}")
-        fragments.append(_open_text(seat_map_url, opener=opener))
+        # The seat-map fragment endpoint 403s unless the request looks like the
+        # checkout page's own XHR (observed 2026-08-06).
+        fragments.append(
+            _open_text(seat_map_url, opener=opener, headers={"X-Requested-With": "XMLHttpRequest"})
+        )
 
     return parse_atom_seat_map_fragments(fragments)
 
@@ -124,9 +128,9 @@ def _retry_after_seconds(error: HTTPError) -> float | None:
         return None
 
 
-def _open_text(url: str, opener: Any | None = None) -> str:
+def _open_text(url: str, opener: Any | None = None, headers: dict[str, str] | None = None) -> str:
     require_allowed_url(url)
-    request = Request(url, headers={"User-Agent": ATOM_USER_AGENT})
+    request = Request(url, headers={"User-Agent": ATOM_USER_AGENT, **(headers or {})})
     opener = opener or _opener()
     for retry_delay in (*ATOM_RETRY_DELAYS_SECONDS, None):
         _throttle()
