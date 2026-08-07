@@ -2,10 +2,10 @@ name: collect
 
 on:
   schedule:
-    # Every 15 min, 10:07am-11:52pm Regina time (UTC-6, no DST). Minutes are
-    # offset from :00/:15/:30/:45 because GitHub delays or drops scheduled
-    # runs during the top-of-hour rush.
-    - cron: "7,22,37,52 16-23,0-5 * * *"
+    # Every 15 min, 9:07am-11:52pm Regina time (UTC-6, no DST), so numbers are
+    # fresh for a mid-morning check. Minutes are offset from :00/:15/:30/:45
+    # because GitHub delays or drops scheduled runs during the top-of-hour rush.
+    - cron: "7,22,37,52 15-23,0-5 * * *"
   workflow_dispatch:
 
 # A delayed run can pile onto the next slot's run; queue them instead of
