@@ -103,9 +103,12 @@ grant select on public.solocinema_screenings to anon;
 -- Called by the collector after each run. For showings that started more than
 -- `keep_after` ago, deletes the snapshot history but always keeps the latest
 -- snapshot and the latest one with seat numbers, so final tickets-sold /
--- seats-available figures per showing survive permanently.
+-- seats-available figures per showing survive permanently. Deletes at most
+-- `max_rows` per call so one call always fits inside PostgREST's statement
+-- timeout; the collector loops until a call comes back short.
 create or replace function public.prune_seat_snapshots(
-  keep_after interval default interval '6 hours'
+  keep_after interval default interval '6 hours',
+  max_rows integer default 20000
 )
 returns integer
 language plpgsql
@@ -115,30 +118,37 @@ as $$
 declare
   deleted integer;
 begin
+  with old_snapshots as (
+    select ss.id, ss.showing_id, ss.checked_at, ss.inferred_occupied
+    from public.seat_snapshots ss
+    join public.showings s on s.id = ss.showing_id
+    where s.starts_at < now() - keep_after
+  ),
+  keepers as (
+    (select distinct on (showing_id) id
+     from old_snapshots
+     order by showing_id, checked_at desc, id desc)
+    union
+    (select distinct on (showing_id) id
+     from old_snapshots
+     where inferred_occupied is not null
+     order by showing_id, checked_at desc, id desc)
+  ),
+  victims as (
+    select id from old_snapshots
+    where id not in (select id from keepers)
+    limit max_rows
+  )
   delete from public.seat_snapshots ss
-  where ss.showing_id in (
-      select s.id from public.showings s
-      where s.starts_at < now() - keep_after
-    )
-    and exists (
-      select 1 from public.seat_snapshots newer
-      where newer.showing_id = ss.showing_id
-        and (newer.checked_at > ss.checked_at
-          or (newer.checked_at = ss.checked_at and newer.id > ss.id))
-    )
-    and (ss.inferred_occupied is null
-      or exists (
-        select 1 from public.seat_snapshots newer
-        where newer.showing_id = ss.showing_id
-          and newer.inferred_occupied is not null
-          and (newer.checked_at > ss.checked_at
-            or (newer.checked_at = ss.checked_at and newer.id > ss.id))
-      ));
+  using victims
+  where ss.id = victims.id;
   get diagnostics deleted = row_count;
   return deleted;
 end;
 $$;
 
-revoke all on function public.prune_seat_snapshots(interval) from public;
-revoke all on function public.prune_seat_snapshots(interval) from anon, authenticated;
-grant execute on function public.prune_seat_snapshots(interval) to service_role;
+revoke all on function public.prune_seat_snapshots(interval, integer) from public;
+revoke all on function public.prune_seat_snapshots(interval, integer)
+  from anon, authenticated;
+grant execute on function public.prune_seat_snapshots(interval, integer)
+  to service_role;

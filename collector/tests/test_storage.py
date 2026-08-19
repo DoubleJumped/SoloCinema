@@ -230,6 +230,34 @@ class SupabaseRepositoryTests(unittest.TestCase):
         snapshot_payload = requests[3][3]
         self.assertEqual(snapshot_payload["showing_id"], "showings-1")
 
+    def test_prune_keeps_calling_until_batch_comes_back_short(self) -> None:
+        repository = SupabaseRepository("https://example.supabase.co", "service-key")
+        # Two full batches, then a short one: the loop must stop after three
+        # calls and report the sum.
+        batches = iter([[20000], [20000], [123]])
+        payloads: list[dict] = []
+
+        def fake_request(method, resource, query=None, payload=None, prefer=None):
+            payloads.append(payload)
+            return next(batches)
+
+        with patch.object(repository, "_request", side_effect=fake_request):
+            total = repository.prune_snapshots()
+
+        self.assertEqual(total, 40123)
+        self.assertEqual(len(payloads), 3)
+        self.assertEqual(
+            payloads[0], {"keep_after": "6 hours", "max_rows": 20000}
+        )
+
+    def test_prune_stops_immediately_when_nothing_to_delete(self) -> None:
+        repository = SupabaseRepository("https://example.supabase.co", "service-key")
+
+        with patch.object(repository, "_request", return_value=[0]) as request:
+            self.assertEqual(repository.prune_snapshots(), 0)
+
+        self.assertEqual(request.call_count, 1)
+
     def test_uncached_showing_falls_back_to_lookup(self) -> None:
         repository, requests = self._repository_with_request_log()
 

@@ -482,13 +482,27 @@ class SupabaseRepository:
 
     def prune_snapshots(self, keep_after_hours: int = 6) -> int:
         # Runs the prune_seat_snapshots() database function from
-        # supabase/migrations/0003_prune_seat_snapshots.sql.
-        rows = self._request(
-            "POST",
-            "rpc/prune_seat_snapshots",
-            payload={"keep_after": f"{keep_after_hours} hours"},
-        )
-        return int(rows[0]) if rows else 0
+        # supabase/migrations/0004_prune_in_batches.sql. Each call deletes at
+        # most one batch so it stays inside PostgREST's statement timeout;
+        # keep calling until a short batch says the backlog is drained. The
+        # iteration cap bounds one run's prune work — anything left drains on
+        # later runs.
+        batch_size = 20000
+        total = 0
+        for _ in range(25):
+            rows = self._request(
+                "POST",
+                "rpc/prune_seat_snapshots",
+                payload={
+                    "keep_after": f"{keep_after_hours} hours",
+                    "max_rows": batch_size,
+                },
+            )
+            deleted = int(rows[0]) if rows else 0
+            total += deleted
+            if deleted < batch_size:
+                break
+        return total
 
     def _lookup_id(self, table: str, column: str, value: str) -> str:
         rows = self._request(
