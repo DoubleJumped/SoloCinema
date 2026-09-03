@@ -3,8 +3,13 @@ from __future__ import annotations
 import tempfile
 import unittest
 from datetime import UTC, datetime
+from email.message import Message
 from pathlib import Path
+from unittest.mock import MagicMock, patch
+from urllib.error import HTTPError
 
+from collector.solocinema_collector import http_retry
+from collector.solocinema_collector import imax as imax_module
 from collector.solocinema_collector.imax import (
     ImaxItem,
     ImaxShowing,
@@ -145,6 +150,138 @@ class ImaxWriteTests(unittest.TestCase):
             self.assertEqual(
                 rows[0]["inferred_occupied"], KRAMER_AUDITORIUM_CAPACITY - 145
             )
+
+
+def _imax_showing(schedule_id: str = "204086") -> ImaxShowing:
+    return ImaxShowing(
+        movie_title="The Odyssey: The IMAX 70mm Experience",
+        starts_at=datetime(2026, 7, 20, 17, 45, tzinfo=UTC),
+        ticket_url=f"https://tickets.sasksciencecentre.com/Selection.aspx?sch={schedule_id}",
+        source_id=f"kramer-imax-atms-{schedule_id}",
+        schedule_id=schedule_id,
+        item_id="3608",
+        remaining=145,
+    )
+
+
+def _http_error(code: int) -> HTTPError:
+    return HTTPError("https://seats-api.ticketclick.com/x", code, "err", Message(), None)
+
+
+class ImaxRequestRetryTests(unittest.TestCase):
+    """Discovery walks one Calendar.aspx per movie with nothing behind it."""
+
+    def setUp(self) -> None:
+        imax_module.IMAX_RETRY_BUDGET.reset()
+        self.addCleanup(imax_module.IMAX_RETRY_BUDGET.reset)
+        sleep_patch = patch.object(http_retry.time, "sleep")
+        self.sleep = sleep_patch.start()
+        self.addCleanup(sleep_patch.stop)
+
+    @staticmethod
+    def _ok_response(body: str) -> MagicMock:
+        response = MagicMock()
+        response.headers.get_content_charset.return_value = "utf-8"
+        response.read.return_value = body.encode()
+        response.__enter__ = lambda self: self
+        response.__exit__ = lambda self, *args: False
+        return response
+
+    def test_survives_a_transient_gateway_error(self) -> None:
+        with patch.object(
+            imax_module,
+            "urlopen",
+            side_effect=[_http_error(503), self._ok_response("<html>ok</html>")],
+        ) as urlopen:
+            body = imax_module._open_text(
+                "https://tickets.sasksciencecentre.com/default.aspx?tagid=18"
+            )
+
+        self.assertEqual(body, "<html>ok</html>")
+        self.assertEqual(urlopen.call_count, 2)
+
+
+class ImaxSeatsKeyRediscoveryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.database_url = f"sqlite:///{self.tmp.name}/imax.sqlite"
+        self.repository = SQLiteRepository(self.database_url)
+        self.repository.init_schema()
+
+    def _write(self, showings: list[ImaxShowing]):
+        return write_imax_showings(
+            self.repository,
+            showings,
+            database_url=self.database_url,
+            probe_seats=True,
+            probe_days=3650,
+            now=datetime(2026, 7, 20, 12, 0, tzinfo=UTC),
+        )
+
+    def test_rejected_key_is_rediscovered_and_the_probe_retried(self) -> None:
+        parsed = parse_imax_seat_svg('<circle class="seat" />')
+        probe_calls: list[str | None] = []
+
+        def probe(schedule_id: str, api_key: str | None = None):
+            probe_calls.append(api_key)
+            if api_key != "key-fresh":
+                raise _http_error(401)
+            return parsed
+
+        with patch.object(imax_module, "probe_imax_seat_map", side_effect=probe), patch.object(
+            imax_module, "resolve_seats_api_key", return_value="key-stale"
+        ), patch.object(
+            imax_module, "discover_seats_api_key", return_value="key-fresh"
+        ) as discover:
+            summary = self._write([_imax_showing()])
+
+        self.assertEqual(summary.failed, 0)
+        self.assertEqual(summary.status, "success")
+        self.assertEqual(probe_calls, ["key-stale", "key-fresh"])
+        self.assertEqual(discover.call_count, 1)
+
+    def test_rediscovery_is_attempted_only_once_per_run(self) -> None:
+        def probe(schedule_id: str, api_key: str | None = None):
+            raise _http_error(403)
+
+        with patch.object(imax_module, "probe_imax_seat_map", side_effect=probe), patch.object(
+            imax_module, "resolve_seats_api_key", return_value="key-stale"
+        ), patch.object(
+            imax_module, "discover_seats_api_key", return_value="key-fresh"
+        ) as discover:
+            summary = self._write([_imax_showing("1"), _imax_showing("2"), _imax_showing("3")])
+
+        self.assertEqual(summary.failed, 3)
+        self.assertEqual(discover.call_count, 1)
+
+    def test_a_rediscovered_key_identical_to_the_current_one_is_not_retried(self) -> None:
+        probe_calls: list[str | None] = []
+
+        def probe(schedule_id: str, api_key: str | None = None):
+            probe_calls.append(api_key)
+            raise _http_error(401)
+
+        with patch.object(imax_module, "probe_imax_seat_map", side_effect=probe), patch.object(
+            imax_module, "resolve_seats_api_key", return_value="key-stale"
+        ), patch.object(imax_module, "discover_seats_api_key", return_value="key-stale"):
+            summary = self._write([_imax_showing()])
+
+        self.assertEqual(summary.failed, 1)
+        self.assertEqual(probe_calls, ["key-stale"])
+
+    def test_other_probe_errors_do_not_trigger_rediscovery(self) -> None:
+        with patch.object(
+            imax_module, "probe_imax_seat_map", side_effect=_http_error(500)
+        ), patch.object(
+            imax_module, "resolve_seats_api_key", return_value="key-stale"
+        ), patch.object(
+            imax_module, "discover_seats_api_key", return_value="key-fresh"
+        ) as discover:
+            summary = self._write([_imax_showing()])
+
+        self.assertEqual(summary.failed, 1)
+        discover.assert_not_called()
 
 
 if __name__ == "__main__":

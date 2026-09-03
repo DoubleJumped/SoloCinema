@@ -29,6 +29,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
+from .http_retry import RetryBudget, open_with_retry
 from .landmark import normalize_movie_title
 from .models import Movie, ScrapeRun, SeatParseResult, SeatSnapshot, Showing, Theater
 from .storage import Repository, repository_from_url
@@ -46,6 +47,13 @@ DEFAULT_SEATS_API_KEY = "key-ssc-8001482daac3efd0464d67b3"
 # stalls). Used to infer occupancy for general-admission showings where only
 # a remaining count is published.
 KRAMER_AUDITORIUM_CAPACITY = 154
+# The Vantix box behind tickets.sasksciencecentre.com is a good deal smaller
+# than Cineplex's gateway, and discovery walks one Calendar.aspx per movie, so
+# any single blip would otherwise abort the whole chain.
+IMAX_RETRY_BUDGET = RetryBudget()
+# The seats API answers with one of these when the org key it was handed has
+# been rotated; that's the cue to re-read the current key, not to give up.
+KEY_REJECTED_STATUSES = frozenset({401, 403})
 IMAX_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
@@ -185,6 +193,11 @@ def discover_seats_api_key(schedule_id: str) -> str | None:
     return match.group(1) if match else None
 
 
+def resolve_seats_api_key(schedule_id: str) -> str:
+    """The key to start a run with: configured, else scraped, else last known."""
+    return IMAX_SEATS_API_KEY or discover_seats_api_key(schedule_id) or DEFAULT_SEATS_API_KEY
+
+
 def probe_imax_seat_map(
     schedule_id: str, api_key: str | None = None
 ) -> SeatParseResult | None:
@@ -280,6 +293,7 @@ def write_imax_showings(
     checked = 0
     failed = 0
     api_key: str | None = None
+    key_rediscovered = False
     now = now or datetime.now(UTC)
 
     try:
@@ -310,12 +324,27 @@ def write_imax_showings(
                 parsed = None
                 if probe_seats and _within_probe_window(showing, now, probe_days):
                     if api_key is None:
-                        api_key = (
-                            IMAX_SEATS_API_KEY
-                            or discover_seats_api_key(showing.schedule_id)
-                            or DEFAULT_SEATS_API_KEY
-                        )
-                    parsed = probe_imax_seat_map(showing.schedule_id, api_key)
+                        api_key = resolve_seats_api_key(showing.schedule_id)
+                    try:
+                        parsed = probe_imax_seat_map(showing.schedule_id, api_key)
+                    except HTTPError as error:
+                        # A rotated org key rejects every remaining probe in
+                        # the run, and the key we hold may be the stale
+                        # hardcoded default (discovery is best-effort). Re-read
+                        # it from the public Selection page and probe once
+                        # more. Only once per run: if a freshly read key is
+                        # rejected too, the failure is real.
+                        if (
+                            error.code not in KEY_REJECTED_STATUSES
+                            or key_rediscovered
+                        ):
+                            raise
+                        key_rediscovered = True
+                        refreshed = discover_seats_api_key(showing.schedule_id)
+                        if refreshed is None or refreshed == api_key:
+                            raise
+                        api_key = refreshed
+                        parsed = probe_imax_seat_map(showing.schedule_id, api_key)
                     if parsed is None:
                         parsed = result_from_remaining(showing.remaining)
                 elif not probe_seats:
@@ -417,9 +446,13 @@ def _run_status(checked: int, failed: int) -> str:
 def _open_text(url: str) -> str:
     require_allowed_url(url)
     request = Request(url, headers={"User-Agent": IMAX_USER_AGENT})
-    with urlopen(request, timeout=30) as response:
-        charset = response.headers.get_content_charset() or "utf-8"
-        return response.read().decode(charset, errors="replace")
+
+    def perform() -> str:
+        with urlopen(request, timeout=30) as response:
+            charset = response.headers.get_content_charset() or "utf-8"
+            return response.read().decode(charset, errors="replace")
+
+    return open_with_retry(perform, IMAX_RETRY_BUDGET)
 
 
 def _unescape(text: str) -> str:

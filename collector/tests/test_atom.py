@@ -8,6 +8,7 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 
 from collector.solocinema_collector import atom
+from collector.solocinema_collector import http_retry
 from collector.solocinema_collector.atom import AtomTheaterParser
 
 
@@ -178,12 +179,13 @@ class AtomOpenTextRetryTests(unittest.TestCase):
         self.assertEqual(opener.attempts, 1)
 
     def test_honors_retry_after_header_with_cap(self) -> None:
-        self.assertEqual(atom._retry_after_seconds(_http_429("7")), 7.0)
-        self.assertEqual(
-            atom._retry_after_seconds(_http_429("999")), atom.ATOM_RETRY_AFTER_CAP_SECONDS
+        cap = atom.ATOM_RETRY_AFTER_CAP_SECONDS
+        self.assertEqual(http_retry.retry_after_seconds(_http_429("7"), cap), 7.0)
+        self.assertEqual(http_retry.retry_after_seconds(_http_429("999"), cap), cap)
+        self.assertIsNone(http_retry.retry_after_seconds(_http_429(), cap))
+        self.assertIsNone(
+            http_retry.retry_after_seconds(_http_429("Wed, 21 Oct 2026 07:28:00 GMT"), cap)
         )
-        self.assertIsNone(atom._retry_after_seconds(_http_429()))
-        self.assertIsNone(atom._retry_after_seconds(_http_429("Wed, 21 Oct 2026 07:28:00 GMT")))
 
     def test_throttle_spaces_requests(self) -> None:
         atom._last_request_at = None

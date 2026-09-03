@@ -3,15 +3,14 @@ from __future__ import annotations
 import json
 import os
 import re
-import time
 from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
-from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
+from .http_retry import RetryBudget, open_with_retry
 from .landmark import normalize_movie_title
 from .models import Movie, ScrapeRun, SeatParseResult, SeatSnapshot, Showing, Theater
 from .storage import Repository, repository_from_url
@@ -37,18 +36,8 @@ DEFAULT_DAYS_AHEAD = 7
 # before this point is the final attendance figure.
 PROBE_GRACE = timedelta(hours=3)
 # Cineplex's API gateway hands out an occasional 403/429/5xx that clears on a
-# retry a few seconds later (2026-09-02: one scheduled run in 100 died because
-# the showtimes call got a single 403). A rotated subscription key answers 401
-# instead, so it still fails fast.
-CINEPLEX_RETRY_STATUSES = frozenset({403, 408, 429, 500, 502, 503, 504})
-CINEPLEX_RETRY_DELAYS_SECONDS = (2.0, 6.0)
-CINEPLEX_RETRY_AFTER_CAP_SECONDS = 30.0
-# A collection makes hundreds of seat-probe requests, so a gateway-wide outage
-# would otherwise spend the whole 20-minute job budget asleep between retries.
-# Once this much total sleep is used, remaining requests fail on first error.
-CINEPLEX_RETRY_BUDGET_SECONDS = 120.0
-
-_retry_budget_remaining = CINEPLEX_RETRY_BUDGET_SECONDS
+# retry a few seconds later; see http_retry for the shared policy.
+CINEPLEX_RETRY_BUDGET = RetryBudget()
 
 CINEPLEX_REGINA_THEATERS = {
     "4108": Theater(
@@ -687,31 +676,6 @@ def _run_status(checked: int, failed: int) -> str:
     return "failed"
 
 
-def reset_retry_budget() -> None:
-    """Restore the per-process retry sleep budget (used by tests)."""
-    global _retry_budget_remaining
-    _retry_budget_remaining = CINEPLEX_RETRY_BUDGET_SECONDS
-
-
-def _spend_retry_budget(seconds: float) -> bool:
-    global _retry_budget_remaining
-    if seconds > _retry_budget_remaining:
-        return False
-    _retry_budget_remaining -= seconds
-    time.sleep(seconds)
-    return True
-
-
-def _retry_after_seconds(error: HTTPError) -> float | None:
-    raw = error.headers.get("Retry-After") if error.headers else None
-    if not raw:
-        return None
-    try:
-        return min(float(raw), CINEPLEX_RETRY_AFTER_CAP_SECONDS)
-    except ValueError:
-        return None
-
-
 def _open_json(url: str, subscription_key: str | None) -> Any:
     if not subscription_key:
         raise RuntimeError("CINEPLEX_SUBSCRIPTION_KEY is not set")
@@ -724,17 +688,13 @@ def _open_json(url: str, subscription_key: str | None) -> Any:
             "User-Agent": CINEPLEX_USER_AGENT,
         },
     )
-    for retry_delay in (*CINEPLEX_RETRY_DELAYS_SECONDS, None):
-        try:
-            with urlopen(request, timeout=30) as response:
-                charset = response.headers.get_content_charset() or "utf-8"
-                return json.loads(response.read().decode(charset, errors="replace"))
-        except HTTPError as error:
-            if error.code not in CINEPLEX_RETRY_STATUSES or retry_delay is None:
-                raise
-            if not _spend_retry_budget(_retry_after_seconds(error) or retry_delay):
-                raise
-    raise AssertionError("unreachable")
+
+    def perform() -> Any:
+        with urlopen(request, timeout=30) as response:
+            charset = response.headers.get_content_charset() or "utf-8"
+            return json.loads(response.read().decode(charset, errors="replace"))
+
+    return open_with_retry(perform, CINEPLEX_RETRY_BUDGET)
 
 
 def _showtimes_url(location_id: str) -> str:

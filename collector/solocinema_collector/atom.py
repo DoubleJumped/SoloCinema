@@ -11,11 +11,11 @@ from datetime import UTC, datetime
 from html.parser import HTMLParser
 from http.cookiejar import CookieJar
 from typing import Any
-from urllib.error import HTTPError
 from urllib.parse import urlencode, urljoin
 from urllib.request import HTTPCookieProcessor, Request, build_opener
 from zoneinfo import ZoneInfo
 
+from .http_retry import RetryBudget, open_with_retry
 from .models import SeatParseResult
 from .seat_parser import parse_atom_seat_map_fragments
 from .url_guard import require_allowed_url
@@ -101,10 +101,15 @@ def _opener():
 
 # Atom 429s after ~65 requests/minute (measured 2026-07-12; no Retry-After
 # header, and the limit persists until the rate drops). 1.2s spacing keeps a
-# sustained ~50/min with headroom; the retry delays catch stragglers.
+# sustained ~50/min with headroom; the retry delays catch stragglers. The
+# delays stay longer than the shared default because Atom's limit needs the
+# rate to actually drop before it clears.
 ATOM_REQUEST_INTERVAL_SECONDS = float(os.environ.get("ATOM_REQUEST_INTERVAL_SECONDS", "1.2"))
 ATOM_RETRY_DELAYS_SECONDS = (5.0, 15.0)
 ATOM_RETRY_AFTER_CAP_SECONDS = 60.0
+# Atom is Landmark's only discovery path in CI (Playwright isn't installed),
+# and nothing sits behind it, so a 403 or 5xx here is worth retrying too.
+ATOM_RETRY_BUDGET = RetryBudget()
 
 _last_request_at: float | None = None
 
@@ -118,32 +123,24 @@ def _throttle() -> None:
     _last_request_at = time.monotonic()
 
 
-def _retry_after_seconds(error: HTTPError) -> float | None:
-    raw = error.headers.get("Retry-After") if error.headers else None
-    if not raw:
-        return None
-    try:
-        return min(float(raw), ATOM_RETRY_AFTER_CAP_SECONDS)
-    except ValueError:
-        return None
-
-
 def _open_text(url: str, opener: Any | None = None, headers: dict[str, str] | None = None) -> str:
     require_allowed_url(url)
     request = Request(url, headers={"User-Agent": ATOM_USER_AGENT, **(headers or {})})
     opener = opener or _opener()
-    for retry_delay in (*ATOM_RETRY_DELAYS_SECONDS, None):
-        _throttle()
-        try:
-            response = opener.open(request, timeout=30)
-        except HTTPError as error:
-            if error.code != 429 or retry_delay is None:
-                raise
-            time.sleep(_retry_after_seconds(error) or retry_delay)
-            continue
+
+    def perform() -> str:
+        response = opener.open(request, timeout=30)
         charset = response.headers.get_content_charset() or "utf-8"
         return response.read().decode(charset, errors="replace")
-    raise AssertionError("unreachable")
+
+    return open_with_retry(
+        perform,
+        ATOM_RETRY_BUDGET,
+        delays=ATOM_RETRY_DELAYS_SECONDS,
+        retry_after_cap=ATOM_RETRY_AFTER_CAP_SECONDS,
+        # The rate limiter applies to retries as much as to first attempts.
+        before_attempt=_throttle,
+    )
 
 
 def _checkout_id(checkout_url: str) -> str:
