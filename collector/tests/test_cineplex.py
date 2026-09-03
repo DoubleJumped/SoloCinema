@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from datetime import UTC, date, datetime
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+from urllib.error import HTTPError
 
+from collector.solocinema_collector import cineplex as cineplex_module
 from collector.solocinema_collector.cineplex import (
     CineplexShowing,
     extract_cineplex_showings,
@@ -308,6 +311,104 @@ class CineplexCollectorTests(unittest.TestCase):
 
         self.assertEqual(summary.status, "success")
         self.assertEqual(probed, [])
+
+
+class CineplexRequestRetryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        cineplex_module.reset_retry_budget()
+        self.addCleanup(cineplex_module.reset_retry_budget)
+        self.slept: list[float] = []
+        sleep_patch = patch.object(
+            cineplex_module.time, "sleep", side_effect=self.slept.append
+        )
+        sleep_patch.start()
+        self.addCleanup(sleep_patch.stop)
+
+    @staticmethod
+    def _http_error(code: int, retry_after: str | None = None) -> HTTPError:
+        headers = {"Retry-After": retry_after} if retry_after else {}
+        return HTTPError("https://apis.cineplex.com/prod/x", code, "err", headers, None)
+
+    @staticmethod
+    def _ok_response(payload: object):
+        response = MagicMock()
+        response.headers.get_content_charset.return_value = "utf-8"
+        response.read.return_value = json.dumps(payload).encode()
+        response.__enter__ = lambda self: self
+        response.__exit__ = lambda self, *args: False
+        return response
+
+    def test_retries_transient_403_then_succeeds(self) -> None:
+        with patch.object(
+            cineplex_module,
+            "urlopen",
+            side_effect=[self._http_error(403), self._ok_response({"ok": True})],
+        ) as urlopen:
+            payload = cineplex_module._open_json(
+                "https://apis.cineplex.com/prod/cpx/theatrical/api/v1/showtimes?locationId=4108",
+                subscription_key="key",
+            )
+
+        self.assertEqual(payload, {"ok": True})
+        self.assertEqual(urlopen.call_count, 2)
+        self.assertEqual(self.slept, [2.0])
+
+    def test_honours_retry_after_header(self) -> None:
+        with patch.object(
+            cineplex_module,
+            "urlopen",
+            side_effect=[
+                self._http_error(429, retry_after="9"),
+                self._ok_response({"ok": True}),
+            ],
+        ):
+            cineplex_module._open_json(
+                "https://apis.cineplex.com/prod/cpx/theatrical/api/v1/showtimes?locationId=4108",
+                subscription_key="key",
+            )
+
+        self.assertEqual(self.slept, [9.0])
+
+    def test_does_not_retry_a_rejected_key(self) -> None:
+        with patch.object(
+            cineplex_module, "urlopen", side_effect=self._http_error(401)
+        ) as urlopen:
+            with self.assertRaises(HTTPError):
+                cineplex_module._open_json(
+                    "https://apis.cineplex.com/prod/cpx/theatrical/api/v1/showtimes?locationId=4108",
+                    subscription_key="stale",
+                )
+
+        self.assertEqual(urlopen.call_count, 1)
+        self.assertEqual(self.slept, [])
+
+    def test_raises_after_retries_are_exhausted(self) -> None:
+        with patch.object(
+            cineplex_module, "urlopen", side_effect=self._http_error(503)
+        ) as urlopen:
+            with self.assertRaises(HTTPError):
+                cineplex_module._open_json(
+                    "https://apis.cineplex.com/prod/cpx/theatrical/api/v1/showtimes?locationId=4108",
+                    subscription_key="key",
+                )
+
+        self.assertEqual(urlopen.call_count, 3)
+        self.assertEqual(self.slept, [2.0, 6.0])
+
+    def test_retry_budget_stops_sleeping_during_a_sustained_outage(self) -> None:
+        with patch.object(
+            cineplex_module, "urlopen", side_effect=self._http_error(403)
+        ):
+            for _ in range(100):
+                with self.assertRaises(HTTPError):
+                    cineplex_module._open_json(
+                        "https://apis.cineplex.com/prod/cpx/theatrical/api/v1/showtimes?locationId=4108",
+                        subscription_key="key",
+                    )
+
+        self.assertLessEqual(
+            sum(self.slept), cineplex_module.CINEPLEX_RETRY_BUDGET_SECONDS
+        )
 
 
 if __name__ == "__main__":
