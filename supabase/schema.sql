@@ -83,7 +83,9 @@ left join lateral (
   select ss.*
   from public.seat_snapshots ss
   where ss.showing_id = s.id
-  order by ss.checked_at desc
+  -- Newest non-failed snapshot first, so one failed probe doesn't blank a
+  -- good seat count (0005_prefer_successful_snapshot.sql).
+  order by (ss.raw_status = 'failed'), ss.checked_at desc
   limit 1
 ) latest on true
 where s.starts_at >= now() - interval '30 minutes';
