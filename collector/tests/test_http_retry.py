@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import unittest
 from email.message import Message
+from http.client import IncompleteRead, RemoteDisconnected
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
@@ -77,6 +79,61 @@ class OpenWithRetryTests(unittest.TestCase):
                     return value
 
                 self.assertEqual(open_with_retry(perform, self.budget), "ok")
+
+    def test_retries_a_dropped_connection_or_unreadable_body(self) -> None:
+        # Each of these failed a scheduled run in September 2026: urlopen
+        # doesn't wrap them in URLError, so they bypassed the retry loop.
+        errors = (
+            RemoteDisconnected("Remote end closed connection without response"),
+            ConnectionResetError("reset by peer"),
+            IncompleteRead(b"partial"),
+            json.JSONDecodeError("Expecting value", "", 0),
+        )
+        for error in errors:
+            with self.subTest(error=type(error).__name__):
+                self.budget.reset()
+                calls = iter([error, "ok"])
+
+                def perform():
+                    value = next(calls)
+                    if isinstance(value, BaseException):
+                        raise value
+                    return value
+
+                self.assertEqual(open_with_retry(perform, self.budget), "ok")
+
+    def test_does_not_retry_a_programming_error(self) -> None:
+        attempts = 0
+
+        def perform():
+            nonlocal attempts
+            attempts += 1
+            raise KeyError("showtimes")
+
+        with self.assertRaises(KeyError):
+            open_with_retry(perform, self.budget)
+
+        self.assertEqual(attempts, 1)
+        self.sleep.assert_not_called()
+
+    def test_discovery_delays_outwait_a_longer_blip(self) -> None:
+        calls = iter([_http_error(403)] * 3 + ["ok"])
+
+        def perform():
+            value = next(calls)
+            if isinstance(value, HTTPError):
+                raise value
+            return value
+
+        result = open_with_retry(
+            perform, self.budget, delays=http_retry.DISCOVERY_RETRY_DELAYS_SECONDS
+        )
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(self._slept(), [2.0, 6.0, 20.0])
+        self.assertLess(
+            sum(http_retry.DISCOVERY_RETRY_DELAYS_SECONDS), http_retry.DEFAULT_BUDGET_SECONDS
+        )
 
     def test_backs_off_then_raises_when_the_outage_persists(self) -> None:
         attempts = 0

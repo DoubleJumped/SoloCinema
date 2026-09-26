@@ -29,7 +29,12 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-from .http_retry import RetryBudget, open_with_retry
+from .http_retry import (
+    DISCOVERY_RETRY_DELAYS_SECONDS,
+    RETRY_DELAYS_SECONDS,
+    RetryBudget,
+    open_with_retry,
+)
 from .landmark import normalize_movie_title
 from .models import Movie, ScrapeRun, SeatParseResult, SeatSnapshot, Showing, Theater
 from .storage import Repository, repository_from_url
@@ -121,11 +126,15 @@ class ImaxCollectionSummary:
 
 
 def discover_imax_showings(tag_id: str = KRAMER_TAG_ID) -> list[ImaxShowing]:
-    listing = _open_text(f"{IMAX_TICKETS_BASE}/default.aspx?tagid={tag_id}")
+    listing = _open_text(
+        f"{IMAX_TICKETS_BASE}/default.aspx?tagid={tag_id}",
+        delays=DISCOVERY_RETRY_DELAYS_SECONDS,
+    )
     showings: list[ImaxShowing] = []
     for item in parse_imax_items(listing):
         calendar = _open_text(
-            f"{IMAX_TICKETS_BASE}/atms/uc/services/Calendar.aspx?item={item.item_id}&v=All"
+            f"{IMAX_TICKETS_BASE}/atms/uc/services/Calendar.aspx?item={item.item_id}&v=All",
+            delays=DISCOVERY_RETRY_DELAYS_SECONDS,
         )
         showings.extend(parse_imax_calendar(calendar, item))
     deduped: dict[str, ImaxShowing] = {}
@@ -443,7 +452,7 @@ def _run_status(checked: int, failed: int) -> str:
     return "failed"
 
 
-def _open_text(url: str) -> str:
+def _open_text(url: str, delays: tuple[float, ...] = RETRY_DELAYS_SECONDS) -> str:
     require_allowed_url(url)
     request = Request(url, headers={"User-Agent": IMAX_USER_AGENT})
 
@@ -452,7 +461,7 @@ def _open_text(url: str) -> str:
             charset = response.headers.get_content_charset() or "utf-8"
             return response.read().decode(charset, errors="replace")
 
-    return open_with_retry(perform, IMAX_RETRY_BUDGET)
+    return open_with_retry(perform, IMAX_RETRY_BUDGET, delays=delays)
 
 
 def _unescape(text: str) -> str:

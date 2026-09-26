@@ -12,7 +12,9 @@ conservative, policy in storage.py.
 
 from __future__ import annotations
 
+import json
 import time
+from http.client import HTTPException
 from collections.abc import Callable
 from typing import TypeVar
 from urllib.error import HTTPError, URLError
@@ -25,6 +27,25 @@ RETRY_STATUSES = frozenset({403, 408, 429, 500, 502, 503, 504})
 RETRY_DELAYS_SECONDS = (2.0, 6.0)
 RETRY_AFTER_CAP_SECONDS = 30.0
 DEFAULT_BUDGET_SECONDS = 120.0
+
+# Discovery has no per-item fallback: one failed call loses the whole chain for
+# the run. It's only a handful of requests, so it can afford to outwait a blip
+# that the per-showing probes would just record as a failed snapshot. The
+# 2026-09-23 Cineplex 403 outlasted the default 8 seconds of retries.
+DISCOVERY_RETRY_DELAYS_SECONDS = (2.0, 6.0, 20.0, 40.0)
+
+# Failures where no usable response came back. urlopen wraps errors raised
+# while sending in URLError, but a connection dropped while awaiting the
+# response surfaces raw (RemoteDisconnected, a ConnectionError and an
+# HTTPException), as does a body cut short (IncompleteRead). A 200 with an
+# empty or HTML body shows up as a JSONDecodeError when `perform` parses it.
+TRANSIENT_ERRORS: tuple[type[Exception], ...] = (
+    URLError,
+    TimeoutError,
+    ConnectionError,
+    HTTPException,
+    json.JSONDecodeError,
+)
 
 
 class RetryBudget:
@@ -87,9 +108,9 @@ def open_with_retry(
                 raise
             if not budget.spend(retry_after_seconds(error, retry_after_cap) or delay):
                 raise
-        except (URLError, TimeoutError):
-            # A reset connection, DNS blip or handshake failure: no response
-            # came back, so nothing was observed to have happened server-side.
+        except TRANSIENT_ERRORS:
+            # A reset connection, DNS blip, handshake failure or truncated
+            # body: nothing usable came back, and these are read-only GETs.
             if delay is None:
                 raise
             if not budget.spend(delay):

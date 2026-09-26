@@ -10,7 +10,12 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-from .http_retry import RetryBudget, open_with_retry
+from .http_retry import (
+    DISCOVERY_RETRY_DELAYS_SECONDS,
+    RETRY_DELAYS_SECONDS,
+    RetryBudget,
+    open_with_retry,
+)
 from .landmark import normalize_movie_title
 from .models import Movie, ScrapeRun, SeatParseResult, SeatSnapshot, Showing, Theater
 from .storage import Repository, repository_from_url
@@ -171,7 +176,11 @@ def discover_cineplex_showings(
     location_id: str = "4108",
     subscription_key: str | None = CINEPLEX_SUBSCRIPTION_KEY,
 ) -> list[CineplexShowing]:
-    payload = _open_json(_showtimes_url(location_id), subscription_key=subscription_key)
+    payload = _open_json(
+        _showtimes_url(location_id),
+        subscription_key=subscription_key,
+        delays=DISCOVERY_RETRY_DELAYS_SECONDS,
+    )
     theater = theater_for_location(location_id)
     return extract_cineplex_showings(payload, location_id, theater.external_id)
 
@@ -676,7 +685,11 @@ def _run_status(checked: int, failed: int) -> str:
     return "failed"
 
 
-def _open_json(url: str, subscription_key: str | None) -> Any:
+def _open_json(
+    url: str,
+    subscription_key: str | None,
+    delays: tuple[float, ...] = RETRY_DELAYS_SECONDS,
+) -> Any:
     if not subscription_key:
         raise RuntimeError("CINEPLEX_SUBSCRIPTION_KEY is not set")
     require_allowed_url(url)
@@ -694,7 +707,7 @@ def _open_json(url: str, subscription_key: str | None) -> Any:
             charset = response.headers.get_content_charset() or "utf-8"
             return json.loads(response.read().decode(charset, errors="replace"))
 
-    return open_with_retry(perform, CINEPLEX_RETRY_BUDGET)
+    return open_with_retry(perform, CINEPLEX_RETRY_BUDGET, delays=delays)
 
 
 def _showtimes_url(location_id: str) -> str:
