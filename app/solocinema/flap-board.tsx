@@ -19,6 +19,9 @@ type FlapBoardProps = {
   rows: BoardRow[];
   updatedLabel: string;
   counts: { empty: number; under: number; total: number };
+  // Supabase couldn't be reached, so the board is empty for that reason
+  // rather than because the filters exclude everything.
+  unavailable?: boolean;
   children?: ReactNode;
 };
 
@@ -70,7 +73,13 @@ function Clock() {
   );
 }
 
-export function FlapBoard({ rows, updatedLabel, counts, children }: FlapBoardProps) {
+export function FlapBoard({
+  rows,
+  updatedLabel,
+  counts,
+  unavailable = false,
+  children
+}: FlapBoardProps) {
   const router = useRouter();
   const rootRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -346,7 +355,12 @@ export function FlapBoard({ rows, updatedLabel, counts, children }: FlapBoardPro
         {visibleCount < rows.length ? (
           <div ref={sentinelRef} className="rows-sentinel" aria-hidden="true" />
         ) : null}
-        {rows.length === 0 ? (
+        {rows.length === 0 && unavailable ? (
+          <div className="board-empty">
+            Showtimes are unavailable right now — <b>check back in a few minutes</b>
+          </div>
+        ) : null}
+        {rows.length === 0 && !unavailable ? (
           <div className="board-empty">
             No screenings match — try another date or turn{" "}
             <b>Under 5 Seats Sold</b> off

@@ -17,34 +17,49 @@ type SupabaseScreeningRow = {
   checked_at: string | null;
 };
 
-export async function getSoloCinemaShowings(): Promise<ScreeningView[]> {
+// "sample" only when Supabase isn't configured (local dev). A configured
+// deployment that can't reach Supabase says so rather than passing the
+// made-up sample screenings off as real showtimes.
+export type ShowingsResult = {
+  screenings: ScreeningView[];
+  source: "live" | "sample" | "unavailable";
+};
+
+const SUPABASE_TIMEOUT_MS = 8000;
+
+export async function getSoloCinemaShowings(): Promise<ShowingsResult> {
   const supabaseUrl = process.env.SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_ANON_KEY;
 
   if (!supabaseUrl || !supabaseKey) {
-    return sampleScreenings;
+    return { screenings: sampleScreenings, source: "sample" };
   }
 
-  const response = await fetch(
-    `${supabaseUrl}/rest/v1/solocinema_screenings?select=*&order=starts_at.asc`,
-    {
-      headers: {
-        apikey: supabaseKey,
-        Authorization: `Bearer ${supabaseKey}`
-      },
-      // The collector only writes every 15 minutes, so serve a cached response
-      // for up to a minute instead of hitting Supabase on every page view.
-      // (An explicit revalidate overrides the page's force-dynamic default.)
-      next: { revalidate: 60 }
+  try {
+    const response = await fetch(
+      `${supabaseUrl}/rest/v1/solocinema_screenings?select=*&order=starts_at.asc`,
+      {
+        headers: {
+          apikey: supabaseKey,
+          Authorization: `Bearer ${supabaseKey}`
+        },
+        // The collector only writes every 15 minutes, so serve a cached response
+        // for up to a minute instead of hitting Supabase on every page view.
+        // (An explicit revalidate overrides the page's force-dynamic default.)
+        next: { revalidate: 60 },
+        signal: AbortSignal.timeout(SUPABASE_TIMEOUT_MS)
+      }
+    );
+    if (!response.ok) {
+      console.error(`solocinema_screenings: HTTP ${response.status}`);
+      return { screenings: [], source: "unavailable" };
     }
-  );
-
-  if (!response.ok) {
-    return sampleScreenings;
+    const rows = (await response.json()) as SupabaseScreeningRow[];
+    return { screenings: rows.map(mapSupabaseRow), source: "live" };
+  } catch (error) {
+    console.error("solocinema_screenings:", error);
+    return { screenings: [], source: "unavailable" };
   }
-
-  const rows = (await response.json()) as SupabaseScreeningRow[];
-  return rows.map(mapSupabaseRow);
 }
 
 function mapSupabaseRow(row: SupabaseScreeningRow): ScreeningView {

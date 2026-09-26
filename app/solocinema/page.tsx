@@ -26,7 +26,9 @@ export default async function SoloCinemaPage({ searchParams }: PageProps) {
   const showAll = params.all === "1";
   const filters = parseScreeningFilters(params);
   const now = new Date();
-  const screenings = sortScreeningsByTime(await getSoloCinemaShowings());
+  const { screenings: fetched, source } = await getSoloCinemaShowings();
+  const unavailable = source === "unavailable";
+  const screenings = sortScreeningsByTime(fetched);
   const filtered = applyScreeningFilters(screenings, filters);
   const visible = filterScreenings(filtered, { showAll });
 
@@ -41,9 +43,9 @@ export default async function SoloCinemaPage({ searchParams }: PageProps) {
     total: visible.length
   };
   const newestCheck = getNewestCheck(screenings);
-  const updatedLabel = `Updated ${
-    newestCheck ? formatRelativeCheck(newestCheck, now) : "never"
-  }`;
+  const updatedLabel = unavailable
+    ? "Data unavailable"
+    : `Updated ${newestCheck ? formatRelativeCheck(newestCheck, now) : "never"}`;
   const options = getFilterOptions(screenings);
   const today = getReginaDay(now.toISOString());
   const tomorrow = getReginaDay(
@@ -52,7 +54,12 @@ export default async function SoloCinemaPage({ searchParams }: PageProps) {
 
   return (
     <main className="wrap">
-      <FlapBoard rows={rows} updatedLabel={updatedLabel} counts={counts}>
+      <FlapBoard
+        rows={rows}
+        updatedLabel={updatedLabel}
+        counts={counts}
+        unavailable={unavailable}
+      >
         <FilterRail
           filters={filters}
           showAll={showAll}
