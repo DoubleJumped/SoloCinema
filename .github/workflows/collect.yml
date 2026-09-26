@@ -1,11 +1,13 @@
 name: collect
 
 on:
+  # The 15-minute cadence (9:07am-11:52pm Regina time) is driven by Supabase
+  # pg_cron calling workflow_dispatch; see
+  # supabase/migrations/0006_dispatch_collector_from_pg_cron.sql. GitHub's own
+  # scheduler dropped ~90% of runs at that frequency. This sparse schedule is
+  # only a backstop in case the dispatcher stops (e.g. an expired token).
   schedule:
-    # Every 15 min, 9:07am-11:52pm Regina time (UTC-6, no DST), so numbers are
-    # fresh for a mid-morning check. Minutes are offset from :00/:15/:30/:45
-    # because GitHub delays or drops scheduled runs during the top-of-hour rush.
-    - cron: "7,22,37,52 15-23,0-5 * * *"
+    - cron: "41 16,19,22,1,4 * * *"
   workflow_dispatch:
 
 # A delayed run can pile onto the next slot's run; queue them instead of
