@@ -359,5 +359,112 @@ class CineplexRequestRetryTests(unittest.TestCase):
         self.sleep.assert_not_called()
 
 
+class DiscoverLocationsTests(unittest.TestCase):
+    SOUTHLAND, NORMANVIEW = "4108", "4114"
+
+    def _showing(self, location_id: str) -> CineplexShowing:
+        return CineplexShowing(
+            movie_title="Film",
+            starts_at=datetime(2026, 9, 27, 1, 0, tzinfo=UTC),
+            ticket_url="https://www.cineplex.com/x",
+            source_id=f"{location_id}-1",
+            vista_session_id="1",
+            location_id=location_id,
+            theater_external_id=location_id,
+        )
+
+    @staticmethod
+    def _http_error(code: int) -> HTTPError:
+        return HTTPError("https://apis.cineplex.com/prod/x", code, "err", {}, None)
+
+    def test_one_theatre_failing_keeps_the_other(self) -> None:
+        def discover(location_id, subscription_key):
+            if location_id == self.NORMANVIEW:
+                raise self._http_error(503)
+            return [self._showing(location_id)]
+
+        with patch.object(cineplex_module, "discover_cineplex_showings", side_effect=discover):
+            showings, key, refreshed, errors = cineplex_module._discover_locations(
+                [self.SOUTHLAND, self.NORMANVIEW], "key"
+            )
+
+        self.assertEqual([s.location_id for s in showings], [self.SOUTHLAND])
+        self.assertEqual([name for name, _ in errors], ["Cineplex Cinemas Normanview"])
+        self.assertFalse(refreshed)
+
+    def test_a_rejected_key_is_refreshed_once_and_reused(self) -> None:
+        seen_keys = []
+
+        def discover(location_id, subscription_key):
+            seen_keys.append(subscription_key)
+            if subscription_key == "stale":
+                raise self._http_error(401)
+            return [self._showing(location_id)]
+
+        with (
+            patch.object(cineplex_module, "discover_cineplex_showings", side_effect=discover),
+            patch.object(cineplex_module, "refreshed_key", return_value="fresh") as refresh,
+        ):
+            showings, key, refreshed, errors = cineplex_module._discover_locations(
+                [self.SOUTHLAND, self.NORMANVIEW], "stale"
+            )
+
+        self.assertEqual(len(showings), 2)
+        self.assertEqual((key, refreshed, errors), ("fresh", True, []))
+        self.assertEqual(seen_keys, ["stale", "fresh", "fresh"])
+        refresh.assert_called_once_with("stale")
+
+    def test_no_fresh_key_lets_the_401_stand_without_refetching(self) -> None:
+        def discover(location_id, subscription_key):
+            raise self._http_error(401)
+
+        with (
+            patch.object(cineplex_module, "discover_cineplex_showings", side_effect=discover),
+            patch.object(cineplex_module, "refreshed_key", return_value=None) as refresh,
+        ):
+            showings, key, refreshed, errors = cineplex_module._discover_locations(
+                [self.SOUTHLAND, self.NORMANVIEW], "stale"
+            )
+
+        self.assertEqual(showings, [])
+        self.assertEqual(len(errors), 2)
+        refresh.assert_called_once()
+
+    def test_every_theatre_failing_records_a_failed_run_and_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_url = f"sqlite:///{Path(directory) / 'solocinema.sqlite'}"
+            with patch.object(
+                cineplex_module,
+                "discover_cineplex_showings",
+                side_effect=self._http_error(403),
+            ):
+                with self.assertRaises(HTTPError):
+                    cineplex_module.run_cineplex_collection(database_url, subscription_key="k")
+
+            repository = SQLiteRepository(database_url)
+            with repository.connect() as connection:
+                runs = connection.execute(
+                    "select chain, status, count_failed from scrape_runs"
+                ).fetchall()
+        self.assertEqual([tuple(run) for run in runs], [("Cineplex", "failed", 1)])
+
+    def test_partial_discovery_writes_what_it_found_and_reports_the_rest(self) -> None:
+        def discover(location_id, subscription_key):
+            if location_id == self.NORMANVIEW:
+                raise self._http_error(503)
+            return [self._showing(location_id)]
+
+        with tempfile.TemporaryDirectory() as directory:
+            database_url = f"sqlite:///{Path(directory) / 'solocinema.sqlite'}"
+            with patch.object(cineplex_module, "discover_cineplex_showings", side_effect=discover):
+                summary = cineplex_module.run_cineplex_collection(
+                    database_url, probe_seats=False, days_ahead=0, subscription_key="k"
+                )
+
+        self.assertEqual(summary.discovered, 1)
+        self.assertEqual(len(summary.errors), 1)
+        self.assertIn("Normanview", summary.errors[0])
+
+
 if __name__ == "__main__":
     unittest.main()

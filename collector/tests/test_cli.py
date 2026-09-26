@@ -4,7 +4,7 @@ import io
 import json
 import unittest
 from contextlib import redirect_stdout
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from unittest.mock import patch
 
 from collector.solocinema_collector import cli
@@ -17,15 +17,22 @@ class _Summary:
     failed: int
     database_url: str
     status: str
+    errors: list[str] = field(default_factory=list)
 
 
-def _summary(status: str = "success", discovered: int = 10, failed: int = 0) -> _Summary:
+def _summary(
+    status: str = "success",
+    discovered: int = 10,
+    failed: int = 0,
+    errors: list[str] | None = None,
+) -> _Summary:
     return _Summary(
         discovered=discovered,
         checked=discovered,
         failed=failed,
         database_url="sqlite:///tmp/x.sqlite",
         status=status,
+        errors=errors or [],
     )
 
 
@@ -80,6 +87,14 @@ class RunAllTests(unittest.TestCase):
         self.assertIn("discovered 0", output["errors"]["landmark"])
         self.assertIn("landmark", output)
 
+    def test_fails_when_one_theatre_in_a_chain_failed(self) -> None:
+        cineplex = lambda **_: _summary(errors=["Normanview: HTTPError: 503"])
+
+        code, output = self._run_all(lambda **_: _summary(), cineplex, lambda **_: _summary())
+
+        self.assertEqual(code, 1)
+        self.assertEqual(output["errors"], {"cineplex": "Normanview: HTTPError: 503"})
+        self.assertEqual(output["cineplex"]["discovered"], 10)
 
 if __name__ == "__main__":
     unittest.main()

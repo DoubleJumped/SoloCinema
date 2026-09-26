@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -363,6 +364,18 @@ def main(argv: list[str] | None = None) -> int:
                 errors[chain] = (
                     f"status failed: discovered {summary['discovered']}, "
                     f"failed {summary['failed']} of {summary['checked']}"
+                )
+            # A theatre that failed discovery while the rest of its chain
+            # collected (Cineplex discovers each location separately).
+            if summary.get("errors") and chain not in errors:
+                errors[chain] = "; ".join(summary["errors"])
+            if summary.get("key_refreshed"):
+                # Not a failure — the run collected with a fresh key — but
+                # the stored secret is stale. Surfaces as an Actions warning.
+                print(
+                    "::warning::Cineplex rejected CINEPLEX_SUBSCRIPTION_KEY; "
+                    "this run used a fresh key from cineplex.com. Update the secret.",
+                    file=sys.stderr,
                 )
         # Trim snapshot history for finished showings, keeping each showing's
         # final seat counts (see prune_seat_snapshots in supabase/schema.sql).

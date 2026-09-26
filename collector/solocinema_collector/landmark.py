@@ -19,7 +19,7 @@ from .atom import (
 )
 from .models import Movie, ScrapeRun, SeatParseResult, SeatSnapshot, Showing, Theater
 from .playwright_probe import probe_seat_map
-from .storage import Repository, repository_from_url
+from .storage import Repository, record_failed_run, repository_from_url
 from .url_guard import is_http_url, require_allowed_url
 
 
@@ -220,8 +220,32 @@ def run_landmark_collection(
     probe_days: int = DEFAULT_PROBE_DAYS,
 ) -> LandmarkCollectionSummary:
     dates = upcoming_regina_dates(days_ahead)
+    repository = repository_from_url(database_url)
+    repository.init_schema()
     try:
-        showings = asyncio.run(
+        showings = _discover_landmark_with_fallback(dates, showtimes_url, wait_ms)
+    except Exception:
+        record_failed_run(repository, "Landmark")
+        raise
+    if max_showings is not None:
+        showings = showings[:max_showings]
+
+    probe_until = dates[min(probe_days, len(dates)) - 1] if probe_days > 0 else None
+    return write_landmark_showings(
+        repository,
+        showings,
+        database_url=database_url,
+        probe_seats=probe_seats and probe_days > 0,
+        probe_until=probe_until,
+        probe_after=datetime.now(UTC) - PROBE_GRACE,
+    )
+
+
+def _discover_landmark_with_fallback(
+    dates: list[date], showtimes_url: str, wait_ms: int
+) -> list[LandmarkShowing]:
+    try:
+        return asyncio.run(
             discover_landmark_showings_for_dates(dates, showtimes_url, wait_ms=wait_ms)
         )
     except Exception as error:
@@ -234,21 +258,7 @@ def run_landmark_collection(
         )
         if not any(marker in message for marker in fallback_markers):
             raise
-        showings = discover_landmark_atom_showings_for_dates(dates)
-    if max_showings is not None:
-        showings = showings[:max_showings]
-
-    probe_until = dates[min(probe_days, len(dates)) - 1] if probe_days > 0 else None
-    repository = repository_from_url(database_url)
-    repository.init_schema()
-    return write_landmark_showings(
-        repository,
-        showings,
-        database_url=database_url,
-        probe_seats=probe_seats and probe_days > 0,
-        probe_until=probe_until,
-        probe_after=datetime.now(UTC) - PROBE_GRACE,
-    )
+        return discover_landmark_atom_showings_for_dates(dates)
 
 
 def write_landmark_showings(

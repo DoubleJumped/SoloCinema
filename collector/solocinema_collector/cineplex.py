@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
+from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
@@ -16,9 +17,10 @@ from .http_retry import (
     RetryBudget,
     open_with_retry,
 )
+from .cineplex_key import refreshed_key
 from .landmark import normalize_movie_title
 from .models import Movie, ScrapeRun, SeatParseResult, SeatSnapshot, Showing, Theater
-from .storage import Repository, repository_from_url
+from .storage import Repository, record_failed_run, repository_from_url
 from .url_guard import require_allowed_url
 
 
@@ -170,6 +172,12 @@ class CineplexCollectionSummary:
     failed: int
     database_url: str
     status: str
+    # Theatres whose discovery failed while another's succeeded; run-all
+    # fails the job on these even though the rest of the chain was written.
+    errors: list[str] = field(default_factory=list)
+    # The stored subscription key was rejected and a fresh one was read from
+    # cineplex.com for this run; the CINEPLEX_SUBSCRIPTION_KEY secret is stale.
+    key_refreshed: bool = False
 
 
 def discover_cineplex_showings(
@@ -266,9 +274,14 @@ def run_cineplex_collection(
     days_ahead: int = DEFAULT_DAYS_AHEAD,
     subscription_key: str | None = CINEPLEX_SUBSCRIPTION_KEY,
 ) -> CineplexCollectionSummary:
-    showings: list[CineplexShowing] = []
-    for location_id in location_ids or list(CINEPLEX_REGINA_THEATERS):
-        showings.extend(discover_cineplex_showings(location_id, subscription_key=subscription_key))
+    repository = repository_from_url(database_url)
+    repository.init_schema()
+    showings, subscription_key, key_refreshed, errors = _discover_locations(
+        location_ids or list(CINEPLEX_REGINA_THEATERS), subscription_key
+    )
+    if errors and not showings:
+        record_failed_run(repository, "Cineplex")
+        raise errors[0][1]
     if days_ahead > 0:
         last_date = datetime.now(REGINA_TZ).date() + timedelta(days=days_ahead - 1)
         showings = [
@@ -284,9 +297,7 @@ def run_cineplex_collection(
         if probe_days > 0
         else None
     )
-    repository = repository_from_url(database_url)
-    repository.init_schema()
-    return write_cineplex_showings(
+    summary = write_cineplex_showings(
         repository,
         showings,
         database_url=database_url,
@@ -295,6 +306,46 @@ def run_cineplex_collection(
         probe_after=datetime.now(UTC) - PROBE_GRACE,
         subscription_key=subscription_key,
     )
+    return replace(
+        summary,
+        errors=[f"{name}: {type(error).__name__}: {error}" for name, error in errors],
+        key_refreshed=key_refreshed,
+    )
+
+
+def _discover_locations(
+    location_ids: list[str], subscription_key: str | None
+) -> tuple[list[CineplexShowing], str | None, bool, list[tuple[str, Exception]]]:
+    """Discover each theatre on its own, so one failing doesn't lose the rest.
+
+    A 401 means Cineplex rotated its public key: read the current one from
+    cineplex.com once per run and carry on with it (see cineplex_key).
+    Returns the showings, the key to probe with, whether it was refreshed,
+    and (theatre name, error) for each theatre that failed.
+    """
+    showings: list[CineplexShowing] = []
+    errors: list[tuple[str, Exception]] = []
+    key = subscription_key
+    refresh_attempted = False
+    key_refreshed = False
+    for location_id in location_ids:
+        try:
+            try:
+                found = discover_cineplex_showings(location_id, subscription_key=key)
+            except HTTPError as error:
+                if error.code != 401 or refresh_attempted:
+                    raise
+                refresh_attempted = True
+                fresh = refreshed_key(key)
+                if fresh is None:
+                    raise
+                key, key_refreshed = fresh, True
+                found = discover_cineplex_showings(location_id, subscription_key=key)
+        except Exception as error:
+            errors.append((theater_for_location(location_id).name, error))
+            continue
+        showings.extend(found)
+    return showings, key, key_refreshed, errors
 
 
 def write_cineplex_showings(

@@ -37,7 +37,7 @@ from .http_retry import (
 )
 from .landmark import normalize_movie_title
 from .models import Movie, ScrapeRun, SeatParseResult, SeatSnapshot, Showing, Theater
-from .storage import Repository, repository_from_url
+from .storage import Repository, record_failed_run, repository_from_url
 from .url_guard import require_allowed_url
 
 
@@ -275,12 +275,16 @@ def run_imax_collection(
     probe_seats: bool = True,
     probe_days: int = 3,
 ) -> ImaxCollectionSummary:
-    showings = discover_imax_showings()
+    repository = repository_from_url(database_url)
+    repository.init_schema()
+    try:
+        showings = discover_imax_showings()
+    except Exception:
+        record_failed_run(repository, "Other")
+        raise
     if max_showings is not None:
         showings = showings[:max_showings]
 
-    repository = repository_from_url(database_url)
-    repository.init_schema()
     return write_imax_showings(
         repository,
         showings,

@@ -608,6 +608,20 @@ class SupabaseRepository:
                 self._connection = None
 
 
+def record_failed_run(repository: Repository, chain: str) -> None:
+    """Log a run that failed before it had anything to write.
+
+    Collection starts its scrape_runs row only once discovery has succeeded,
+    so without this a discovery failure leaves no trace in the run history.
+    Best-effort: a database error here mustn't mask the discovery error.
+    """
+    try:
+        run_id = repository.start_run(ScrapeRun(chain=chain))
+        repository.finish_run(run_id, "failed", count_checked=0, count_failed=1)
+    except Exception:
+        return
+
+
 def _lookup_id(
     connection: sqlite3.Connection, table: str, column: str, value: str
 ) -> int:
