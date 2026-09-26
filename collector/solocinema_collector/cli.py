@@ -354,6 +354,16 @@ def main(argv: list[str] | None = None) -> int:
             output["imax"] = asdict(imax_summary)
         except Exception as error:
             errors["imax"] = f"{type(error).__name__}: {error}"
+        # A chain that raised is caught above, but one that quietly came back
+        # empty (a parser that no longer matches the site's markup) or had
+        # every probe fail reports status "failed" without raising. Fail the
+        # job for those too, or the breakage only shows as a thinning board.
+        for chain, summary in output.items():
+            if summary["status"] == "failed" and chain not in errors:
+                errors[chain] = (
+                    f"status failed: discovered {summary['discovered']}, "
+                    f"failed {summary['failed']} of {summary['checked']}"
+                )
         # Trim snapshot history for finished showings, keeping each showing's
         # final seat counts (see prune_seat_snapshots in supabase/schema.sql).
         # Pruning scans the whole snapshot table, so once an hour is plenty;
