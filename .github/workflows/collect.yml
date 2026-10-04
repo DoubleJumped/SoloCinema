@@ -20,6 +20,9 @@ jobs:
   collect:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      outcome: ${{ steps.run.outcome }}
+      failed_chains: ${{ steps.run.outputs.failed_chains }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -30,8 +33,40 @@ jobs:
       # Landmark source uses its Atom Tickets HTTP path, same as it did on
       # Render (see research/collector-efficiency-audit.md).
       - run: pip install -e .
-      - run: python -m collector.solocinema_collector.cli run-all --database-url supabase
+      # A failure here doesn't fail the workflow yet; the retry job below
+      # gets one more go at whichever chains failed.
+      - id: run
+        continue-on-error: true
+        run: python -m collector.solocinema_collector.cli run-all --database-url supabase
         env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          CINEPLEX_SUBSCRIPTION_KEY: ${{ secrets.CINEPLEX_SUBSCRIPTION_KEY }}
+
+  # The 2026-10-03 and 2026-10-04 Cineplex 403s outlasted more than 90 seconds
+  # of in-run retries, yet the next run 15 minutes later was fine, so waiting
+  # longer on the same runner isn't the answer. Collect the failed chains once
+  # more from a fresh runner (new IP, a few minutes later); the workflow only
+  # goes red if that fails too.
+  retry:
+    needs: collect
+    if: needs.collect.outputs.outcome == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e .
+      # FAILED_CHAINS is empty if the first attempt died before reporting,
+      # which collects every chain again.
+      - run: |
+          echo "::warning::First attempt failed (${FAILED_CHAINS:-all chains}); collecting again."
+          python -m collector.solocinema_collector.cli run-all --database-url supabase --chains "$FAILED_CHAINS"
+        env:
+          FAILED_CHAINS: ${{ needs.collect.outputs.failed_chains }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           CINEPLEX_SUBSCRIPTION_KEY: ${{ secrets.CINEPLEX_SUBSCRIPTION_KEY }}

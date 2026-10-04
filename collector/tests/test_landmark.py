@@ -6,6 +6,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from unittest.mock import patch
 
+from collector.solocinema_collector.atom import AtomChallengeError
 from collector.solocinema_collector.landmark import (
     LandmarkShowing,
     _is_access_denied,
@@ -17,6 +18,7 @@ from collector.solocinema_collector.landmark import (
     url_with_date,
     write_landmark_showings,
 )
+from collector.solocinema_collector.models import SeatParseResult
 from collector.solocinema_collector.storage import SQLiteRepository
 
 
@@ -227,6 +229,83 @@ class LandmarkCollectorTests(unittest.TestCase):
                 "You don't have permission to access this server. https://errors.edgesuite.net/ref",
             )
         )
+
+
+class LandmarkProbeFailureTests(unittest.TestCase):
+    def _showings(self, count: int) -> list[LandmarkShowing]:
+        return [
+            LandmarkShowing(
+                movie_title=f"Film {index}",
+                starts_at=datetime(2026, 7, 6, 1, 15 + index, tzinfo=UTC),  # July 5, Regina
+                ticket_url=f"https://www.atomtickets.com/checkout/{index}",
+                source_id=f"landmark-regina-atom-{index}",
+            )
+            for index in range(count)
+        ]
+
+    def test_challenge_stops_probing_and_marks_seats_unavailable(self) -> None:
+        showings = self._showings(3)
+        with tempfile.TemporaryDirectory() as directory:
+            database_url = f"sqlite:///{Path(directory) / 'solocinema.sqlite'}"
+            repository = SQLiteRepository(database_url)
+            repository.init_schema()
+            # An earlier run read real counts; the block must not leave them
+            # on the board as if they were current.
+            with patch(
+                "collector.solocinema_collector.landmark._probe_showing_seats",
+                return_value=SeatParseResult(
+                    inferred_occupied=4,
+                    available_seats=96,
+                    total_sellable_seats=100,
+                    raw_status="available",
+                    confidence="high",
+                ),
+            ):
+                write_landmark_showings(
+                    repository, showings, database_url=database_url, probe_until=date(2026, 7, 6)
+                )
+            with patch(
+                "collector.solocinema_collector.landmark._probe_showing_seats",
+                side_effect=AtomChallengeError("challenge"),
+            ) as probe:
+                summary = write_landmark_showings(
+                    repository, showings, database_url=database_url, probe_until=date(2026, 7, 6)
+                )
+            rows = repository.list_screenings()
+
+        self.assertEqual(probe.call_count, 1)
+        self.assertTrue(summary.probe_blocked)
+        self.assertEqual(summary.status, "partial")
+        self.assertEqual(summary.failed, 0)
+        self.assertEqual(len(rows), 3)
+        self.assertEqual({row["raw_status"] for row in rows}, {"unavailable"})
+        self.assertEqual({row["inferred_occupied"] for row in rows}, {None})
+
+    def test_run_fails_when_every_probe_fails_despite_unprobed_showings(self) -> None:
+        near = self._showings(2)
+        far = LandmarkShowing(
+            movie_title="Far Show",
+            starts_at=datetime(2026, 7, 9, 1, 15, tzinfo=UTC),  # July 8, Regina
+            ticket_url="https://www.atomtickets.com/checkout/99",
+            source_id="landmark-regina-atom-99",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            database_url = f"sqlite:///{Path(directory) / 'solocinema.sqlite'}"
+            repository = SQLiteRepository(database_url)
+            repository.init_schema()
+            with patch(
+                "collector.solocinema_collector.landmark._probe_showing_seats",
+                side_effect=RuntimeError("HTTP Error 403: Forbidden"),
+            ):
+                summary = write_landmark_showings(
+                    repository,
+                    [*near, far],
+                    database_url=database_url,
+                    probe_until=date(2026, 7, 6),
+                )
+
+        self.assertEqual((summary.checked, summary.failed), (3, 2))
+        self.assertEqual(summary.status, "failed")
 
 
 if __name__ == "__main__":

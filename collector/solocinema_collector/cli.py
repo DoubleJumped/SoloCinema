@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -142,6 +143,12 @@ def main(argv: list[str] | None = None) -> int:
     run_all.add_argument("--database-url", default=DEFAULT_DATABASE_URL)
     run_all.add_argument("--wait-ms", type=int, default=5000)
     run_all.add_argument("--max-showings-per-chain", type=int)
+    run_all.add_argument(
+        "--chains",
+        default="",
+        help="Comma-separated chains to collect (landmark, cineplex, imax); "
+        "defaults to all. The workflow's retry job passes the chains that failed.",
+    )
     run_all.add_argument(
         "--days-ahead",
         type=int,
@@ -319,42 +326,44 @@ def main(argv: list[str] | None = None) -> int:
         from .imax import run_imax_collection
         from .landmark import run_landmark_collection
 
-        # One chain failing must not stop the other from collecting.
-        output: dict[str, Any] = {}
-        errors: dict[str, str] = {}
-        try:
-            landmark_summary = run_landmark_collection(
+        collectors = {
+            "landmark": lambda: run_landmark_collection(
                 database_url=args.database_url,
                 wait_ms=args.wait_ms,
                 max_showings=args.max_showings_per_chain,
                 probe_seats=not args.skip_seat_probe,
                 days_ahead=args.days_ahead,
                 probe_days=args.probe_days,
-            )
-            output["landmark"] = asdict(landmark_summary)
-        except Exception as error:
-            errors["landmark"] = f"{type(error).__name__}: {error}"
-        try:
-            cineplex_summary = run_cineplex_collection(
+            ),
+            "cineplex": lambda: run_cineplex_collection(
                 database_url=args.database_url,
                 max_showings=args.max_showings_per_chain,
                 probe_seats=not args.skip_seat_probe,
                 probe_days=args.probe_days,
                 days_ahead=args.days_ahead,
-            )
-            output["cineplex"] = asdict(cineplex_summary)
-        except Exception as error:
-            errors["cineplex"] = f"{type(error).__name__}: {error}"
-        try:
-            imax_summary = run_imax_collection(
+            ),
+            "imax": lambda: run_imax_collection(
                 database_url=args.database_url,
                 max_showings=args.max_showings_per_chain,
                 probe_seats=not args.skip_seat_probe,
                 probe_days=args.probe_days,
-            )
-            output["imax"] = asdict(imax_summary)
-        except Exception as error:
-            errors["imax"] = f"{type(error).__name__}: {error}"
+            ),
+        }
+        wanted = [name.strip() for name in args.chains.split(",") if name.strip()]
+        unknown_chains = [name for name in wanted if name not in collectors]
+        if unknown_chains:
+            parser.error(f"unknown chain(s): {', '.join(unknown_chains)}")
+
+        # One chain failing must not stop the other from collecting.
+        output: dict[str, Any] = {}
+        errors: dict[str, str] = {}
+        for chain, collect in collectors.items():
+            if wanted and chain not in wanted:
+                continue
+            try:
+                output[chain] = asdict(collect())
+            except Exception as error:
+                errors[chain] = f"{type(error).__name__}: {error}"
         # A chain that raised is caught above, but one that quietly came back
         # empty (a parser that no longer matches the site's markup) or had
         # every probe fail reports status "failed" without raising. Fail the
@@ -377,6 +386,16 @@ def main(argv: list[str] | None = None) -> int:
                     "this run used a fresh key from cineplex.com. Update the secret.",
                     file=sys.stderr,
                 )
+            if summary.get("probe_blocked"):
+                # Not a failure either: no retry or rerun gets past a bot
+                # challenge, and failing every 15 minutes would bury the
+                # failures that can be fixed. The board shows the affected
+                # showings without seat counts in the meantime.
+                print(
+                    "::warning::Atom Tickets is serving a Cloudflare challenge; "
+                    "Landmark showtimes were collected without seat counts.",
+                    file=sys.stderr,
+                )
         # Trim snapshot history for finished showings, keeping each showing's
         # final seat counts (see prune_seat_snapshots in supabase/schema.sql).
         # Pruning scans the whole snapshot table, so once an hour is plenty;
@@ -391,7 +410,12 @@ def main(argv: list[str] | None = None) -> int:
         if errors:
             output["errors"] = errors
         print(json.dumps(output, indent=2))
-        return 1 if any(chain != "prune" for chain in errors) else 0
+        failed_chains = [chain for chain in errors if chain != "prune"]
+        # Tells the workflow's retry job which chains to collect again.
+        if os.environ.get("GITHUB_OUTPUT"):
+            with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+                handle.write(f"failed_chains={','.join(failed_chains)}\n")
+        return 1 if failed_chains else 0
     raise AssertionError(f"Unhandled command {args.command}")
 
 

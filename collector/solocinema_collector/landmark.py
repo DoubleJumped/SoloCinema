@@ -12,6 +12,7 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 
 from .atom import (
+    AtomChallengeError,
     ATOM_LANDMARK_REGINA_URL,
     AtomShowing,
     discover_atom_showings,
@@ -155,6 +156,9 @@ class LandmarkCollectionSummary:
     failed: int
     database_url: str
     status: str
+    # Atom put its checkout pages behind a bot challenge, so this run couldn't
+    # read seat maps; the showings were still written. run-all warns on it.
+    probe_blocked: bool = False
 
 
 def url_with_date(url: str, day: date) -> str:
@@ -272,6 +276,8 @@ def write_landmark_showings(
     run_id = repository.start_run(ScrapeRun(chain="Landmark"))
     checked = 0
     failed = 0
+    probed = 0
+    blocked: AtomChallengeError | None = None
 
     try:
         repository.upsert_theater(LANDMARK_REGINA_THEATER)
@@ -298,13 +304,27 @@ def write_landmark_showings(
                 # Showings we didn't probe get no snapshot row at all; the
                 # screenings view reads missing snapshots as status "unknown".
                 if probe_seats and _within_probe_window(showing, probe_until, probe_after):
-                    parsed = _probe_showing_seats(showing)
+                    # Once Atom has challenged one probe it will challenge the
+                    # rest, so stop asking for this run. An "unavailable"
+                    # snapshot outranks the showing's last real count in the
+                    # screenings view, so the board shows no seat data rather
+                    # than a count that stopped updating when the block began.
+                    if blocked is None:
+                        probed += 1
+                        try:
+                            parsed = _probe_showing_seats(showing)
+                        except AtomChallengeError as error:
+                            blocked = error
+                    if blocked is not None:
+                        parsed = _unavailable_result(str(blocked))
                     repository.insert_snapshot(_snapshot_from_result(showing, parsed))
             except Exception as error:
                 failed += 1
                 _insert_failed_snapshot(repository, showing, error)
 
-        status = _run_status(checked, failed)
+        status = _run_status(checked, failed, probed)
+        if blocked is not None and status == "success":
+            status = "partial"
         repository.finish_run(run_id, status, count_checked=checked, count_failed=failed)
         return LandmarkCollectionSummary(
             discovered=len(showings),
@@ -312,6 +332,7 @@ def write_landmark_showings(
             failed=failed,
             database_url=database_url,
             status=status,
+            probe_blocked=blocked is not None,
         )
     except Exception:
         repository.finish_run(run_id, "failed", count_checked=checked, count_failed=max(failed, 1))
@@ -800,12 +821,26 @@ def _unknown_result(message: str) -> SeatParseResult:
     )
 
 
-def _run_status(checked: int, failed: int) -> str:
+def _unavailable_result(message: str) -> SeatParseResult:
+    return SeatParseResult(
+        inferred_occupied=None,
+        available_seats=None,
+        total_sellable_seats=None,
+        raw_status="unavailable",
+        confidence="low",
+        error_message=message,
+    )
+
+
+def _run_status(checked: int, failed: int, probed: int = 0) -> str:
     if checked == 0:
         return "failed"
     if failed == 0:
         return "success"
-    if failed < checked:
+    # Showings outside the probe window count as checked without ever being
+    # probed, so "fewer failures than showings" alone would call a run where
+    # every seat probe failed merely partial.
+    if failed < checked and not (probed and failed >= probed):
         return "partial"
     return "failed"
 

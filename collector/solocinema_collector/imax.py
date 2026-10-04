@@ -305,6 +305,7 @@ def write_imax_showings(
     run_id = repository.start_run(ScrapeRun(chain="Other"))
     checked = 0
     failed = 0
+    probed = 0
     api_key: str | None = None
     key_rediscovered = False
     now = now or datetime.now(UTC)
@@ -336,6 +337,7 @@ def write_imax_showings(
                 # calendar-derived remaining-seats snapshot.
                 parsed = None
                 if probe_seats and _within_probe_window(showing, now, probe_days):
+                    probed += 1
                     if api_key is None:
                         api_key = resolve_seats_api_key(showing.schedule_id)
                     try:
@@ -368,7 +370,7 @@ def write_imax_showings(
                 failed += 1
                 _insert_failed_snapshot(repository, showing, error)
 
-        status = _run_status(checked, failed)
+        status = _run_status(checked, failed, probed)
         repository.finish_run(run_id, status, count_checked=checked, count_failed=failed)
         return ImaxCollectionSummary(
             discovered=len(showings),
@@ -446,12 +448,15 @@ def _unknown_result(message: str) -> SeatParseResult:
     )
 
 
-def _run_status(checked: int, failed: int) -> str:
+def _run_status(checked: int, failed: int, probed: int = 0) -> str:
     if checked == 0:
         return "failed"
     if failed == 0:
         return "success"
-    if failed < checked:
+    # Showings outside the probe window count as checked without ever being
+    # probed, so "fewer failures than showings" alone would call a run where
+    # every seat probe failed merely partial.
+    if failed < checked and not (probed and failed >= probed):
         return "partial"
     return "failed"
 

@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from html.parser import HTMLParser
 from http.cookiejar import CookieJar
 from typing import Any
+from urllib.error import HTTPError
 from urllib.parse import urlencode, urljoin
 from urllib.request import HTTPCookieProcessor, Request, build_opener
 from zoneinfo import ZoneInfo
@@ -30,6 +31,21 @@ ATOM_USER_AGENT = (
     "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
 )
 REGINA_TZ = ZoneInfo("America/Regina")
+
+
+class AtomChallengeError(RuntimeError):
+    """Atom answered with Cloudflare's interactive bot challenge.
+
+    Since 2026-10-04 15:24 UTC every /checkout/ page comes back as a 403
+    "Just a moment..." page (`cf-mitigated: challenge`). Only a real browser
+    can pass it, so a retry can't succeed and neither can the next showing;
+    callers stop probing for the run instead of spending the retry budget.
+    """
+
+
+def is_cloudflare_challenge(error: HTTPError) -> bool:
+    headers = error.headers
+    return bool(headers) and (headers.get("cf-mitigated") or "").lower() == "challenge"
 
 
 @dataclass(frozen=True)
@@ -129,7 +145,14 @@ def _open_text(url: str, opener: Any | None = None, headers: dict[str, str] | No
     opener = opener or _opener()
 
     def perform() -> str:
-        response = opener.open(request, timeout=30)
+        try:
+            response = opener.open(request, timeout=30)
+        except HTTPError as error:
+            if is_cloudflare_challenge(error):
+                raise AtomChallengeError(
+                    f"Atom Tickets served a Cloudflare challenge for {url}"
+                ) from error
+            raise
         charset = response.headers.get_content_charset() or "utf-8"
         return response.read().decode(charset, errors="replace")
 

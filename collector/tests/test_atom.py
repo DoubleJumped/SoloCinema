@@ -201,5 +201,29 @@ class AtomOpenTextRetryTests(unittest.TestCase):
         atom._last_request_at = None
 
 
+class AtomChallengeTests(unittest.TestCase):
+    def test_cloudflare_challenge_raises_without_retrying(self) -> None:
+        headers = Message()
+        headers["cf-mitigated"] = "challenge"
+        challenge = HTTPError(
+            "https://www.atomtickets.com/checkout/1", 403, "Forbidden", headers, io.BytesIO()
+        )
+        opener = _FlakyOpener([challenge])
+        with patch.object(atom.time, "sleep"):
+            with self.assertRaises(atom.AtomChallengeError):
+                atom._open_text("https://www.atomtickets.com/checkout/1", opener=opener)
+        self.assertEqual(opener.attempts, 1)
+
+    def test_plain_403_is_still_retried(self) -> None:
+        plain = HTTPError(
+            "https://www.atomtickets.com/checkout/1", 403, "Forbidden", Message(), io.BytesIO()
+        )
+        opener = _FlakyOpener([plain])
+        with patch.object(atom.time, "sleep"):
+            text = atom._open_text("https://www.atomtickets.com/checkout/1", opener=opener)
+        self.assertEqual(text, "ok")
+        self.assertEqual(opener.attempts, 2)
+
+
 if __name__ == "__main__":
     unittest.main()
