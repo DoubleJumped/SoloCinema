@@ -48,9 +48,14 @@ jobs:
   # longer on the same runner isn't the answer. Collect the failed chains once
   # more from a fresh runner (new IP, a few minutes later); the workflow only
   # goes red if that fails too.
+  #
+  # It also covers a collect job that never ran its steps: during GitHub's
+  # 2026-10-05 Actions incident three jobs were cancelled after 15 minutes
+  # with "The job was not acquired by Runner of type hosted". always() is
+  # needed because a job whose dependency didn't succeed is otherwise skipped.
   retry:
     needs: collect
-    if: needs.collect.outputs.outcome == 'failure'
+    if: always() && (needs.collect.result != 'success' || needs.collect.outputs.outcome == 'failure')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
